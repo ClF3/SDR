@@ -1,0 +1,16 @@
+[Unit]
+Description=SDR Raspberry Pi WebSDR backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/SDR
+Environment=PYTHONPATH=/home/pi/SDR
+ExecStart=/usr/bin/python3 -m sdr_backend --config rpi/backend/config/dev.yaml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+

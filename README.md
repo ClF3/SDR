@@ -21,3 +21,18 @@ The first implementation target is a single receive stream:
 - TCP control plane
 - Raspberry Pi demodulation and WebSDR UI
 
+## First Software Loop
+
+Run a local development loop with the fake AC920:
+
+```sh
+python -m fake_ac920 --scenario wfm_tone --bind 127.0.0.1
+python -m sdr_backend --config rpi/backend/config/dev.yaml
+```
+
+Then start the browser UI from `rpi/frontend`:
+
+```sh
+npm install
+npm run dev
+```
