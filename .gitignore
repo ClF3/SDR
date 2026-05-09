@@ -1,0 +1,70 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Node/frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+dist/
+
+# Logs and captures
+*.log
+*.pcap
+*.pcapng
+*.wav
+*.raw
+*.sc16
+*.iq
+
+# Curated small vectors used by tests may be committed intentionally
+!common/test_vectors/**
+!tests/golden/**
+
+# Vivado/Xilinx generated files
+*.jou
+*.log
+*.str
+*.xpr
+*.hwdef
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.srcs/
+*.gen/
+*.data/
+.Xil/
+
+# Build artifacts
+*.bit
+*.bin
+*.ltx
+*.xsa
+*.elf
+*.o
+*.so
+*.a
+
+# Keep explicit artifact placeholders only
+!fpga/artifacts/.gitkeep
