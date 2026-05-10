@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Play, Radio, Square, Volume2, Wifi } from "lucide-react";
+import { Play, Radio, Square, Volume2, VolumeX, Waves, Wifi } from "lucide-react";
+import {
+  LocalSpectrumCanvas,
+  WidebandWaterfallCanvas,
+  clampFrequency,
+  formatFrequency,
+  type LocalSpectrum,
+  type SpectrumMessage,
+  type WidebandPsd
+} from "./spectrum";
 import "./styles.css";
 
 type Status = {
@@ -11,6 +20,7 @@ type Status = {
     frontend?: Record<string, unknown>;
   };
   rx?: Record<string, unknown>;
+  psd?: Record<string, unknown>;
   streams?: Record<string, {
     packets: number;
     lost_packets: number;
@@ -19,13 +29,6 @@ type Status = {
     fifo_overflow_count: number;
   }>;
   last_error?: string | null;
-};
-
-type Spectrum = {
-  center_frequency_hz: number;
-  sample_rate_hz: number;
-  bin_spacing_hz: number;
-  bins_dbfs: number[];
 };
 
 const modes = ["AM", "USB", "LSB", "CW", "NFM", "WFM"];
@@ -57,53 +60,6 @@ function api(path: string, body?: unknown) {
   });
 }
 
-function SpectrumCanvas({ spectrum }: { spectrum: Spectrum | null }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const waterfallRef = useRef<ImageData | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !spectrum) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const width = canvas.width;
-    const height = canvas.height;
-    const traceHeight = 110;
-    const bins = spectrum.bins_dbfs;
-
-    ctx.fillStyle = "#101316";
-    ctx.fillRect(0, 0, width, traceHeight);
-    ctx.strokeStyle = "#6ee7b7";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    bins.forEach((value, index) => {
-      const x = (index / Math.max(bins.length - 1, 1)) * width;
-      const y = traceHeight - Math.max(0, Math.min(1, (value + 110) / 90)) * traceHeight;
-      if (index === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    const wfTop = traceHeight + 8;
-    const wfHeight = height - wfTop;
-    const prev = waterfallRef.current;
-    if (prev) ctx.putImageData(prev, 0, wfTop + 1);
-    const row = ctx.createImageData(width, 1);
-    for (let x = 0; x < width; x++) {
-      const bin = bins[Math.floor((x / width) * bins.length)] ?? -120;
-      const level = Math.max(0, Math.min(1, (bin + 105) / 75));
-      row.data[x * 4 + 0] = Math.floor(30 + level * 220);
-      row.data[x * 4 + 1] = Math.floor(70 + level * 160);
-      row.data[x * 4 + 2] = Math.floor(95 + (1 - level) * 80);
-      row.data[x * 4 + 3] = 255;
-    }
-    ctx.putImageData(row, 0, wfTop);
-    waterfallRef.current = ctx.getImageData(0, wfTop, width, wfHeight - 1);
-  }, [spectrum]);
-
-  return <canvas className="spectrum" width={1000} height={360} ref={canvasRef} />;
-}
-
 function App() {
   const [host, setHost] = useState("127.0.0.1");
   const [frequency, setFrequency] = useState(98500000);
@@ -113,10 +69,14 @@ function App() {
   const [attenuator, setAttenuator] = useState(10);
   const [lna, setLna] = useState("bypass");
   const [status, setStatus] = useState<Status | null>(null);
-  const [spectrum, setSpectrum] = useState<Spectrum | null>(null);
+  const [wideband, setWideband] = useState<WidebandPsd | null>(null);
+  const [localSpectrum, setLocalSpectrum] = useState<LocalSpectrum | null>(null);
   const [log, setLog] = useState("idle");
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioVolume, setAudioVolume] = useState(0.8);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSocketRef = useRef<WebSocket | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
 
   useEffect(() => {
     api("/api/status").then(setStatus).catch(() => undefined);
@@ -127,8 +87,24 @@ function App() {
 
   useEffect(() => {
     const ws = new WebSocket(`${wsBase()}/ws/spectrum`);
-    ws.onmessage = (event) => setSpectrum(JSON.parse(event.data));
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data) as SpectrumMessage;
+      if (message.type === "wideband_psd") setWideband(message);
+      if (message.type === "local_spectrum") setLocalSpectrum(message);
+    };
     return () => ws.close();
+  }, []);
+
+  useEffect(() => {
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = audioEnabled ? audioVolume : 0;
+    }
+  }, [audioEnabled, audioVolume]);
+
+  useEffect(() => {
+    return () => {
+      closeAudio();
+    };
   }, []);
 
   async function connect() {
@@ -138,18 +114,25 @@ function App() {
     setLog("connected");
   }
 
-  async function startRx() {
+  async function startRx(nextFrequency = frequency) {
+    const tunedFrequency = clampFrequency(nextFrequency);
     await api("/api/rx", {
       stream_id: 0,
       adc_channel: 0,
-      frequency_hz: frequency,
+      frequency_hz: tunedFrequency,
       mode,
       iq_sample_rate_hz: rate,
       bandwidth_hz: bandwidth,
       sample_format: "SC16_LE",
       enable: true
     });
-    setLog("rx running");
+    setFrequency(tunedFrequency);
+    setLog(`rx ${formatFrequency(tunedFrequency)}`);
+  }
+
+  async function startPsd() {
+    await api("/api/psd", {});
+    setLog("wideband psd running");
   }
 
   async function stopRx() {
@@ -157,17 +140,46 @@ function App() {
     setLog("stopped");
   }
 
-  async function startAudio() {
+  function closeAudio() {
+    audioSocketRef.current?.close();
+    audioSocketRef.current = null;
+    gainNodeRef.current = null;
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+    if (context && context.state !== "closed") {
+      void context.close();
+    }
+  }
+
+  async function toggleAudio() {
+    if (audioEnabled) {
+      closeAudio();
+      setAudioEnabled(false);
+      setLog("audio muted");
+      return;
+    }
+
     const AudioCtor = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const context = new AudioCtor({ sampleRate: 48000 });
     await context.audioWorklet.addModule("/audio-worklet.js");
     const node = new AudioWorkletNode(context, "pcm-player", { outputChannelCount: [1] });
-    node.connect(context.destination);
+    const gain = context.createGain();
+    gain.gain.value = audioVolume;
+    node.connect(gain).connect(context.destination);
     const ws = new WebSocket(`${wsBase()}/ws/audio`);
     ws.binaryType = "arraybuffer";
     ws.onmessage = (event) => node.port.postMessage(event.data, [event.data]);
+    ws.onclose = () => {
+      if (audioSocketRef.current === ws) {
+        audioSocketRef.current = null;
+        setAudioEnabled(false);
+      }
+    };
+    await context.resume();
     audioContextRef.current = context;
     audioSocketRef.current = ws;
+    gainNodeRef.current = gain;
+    setAudioEnabled(true);
     setLog("audio enabled");
   }
 
@@ -192,9 +204,13 @@ function App() {
           <input value={host} onChange={(event) => setHost(event.target.value)} />
         </label>
         <button onClick={connect}><Radio size={16} /> Connect</button>
-        <button onClick={startRx}><Play size={16} /> Start RX</button>
+        <button onClick={() => startRx()}><Play size={16} /> Start RX</button>
+        <button onClick={startPsd}><Waves size={16} /> PSD</button>
         <button onClick={stopRx}><Square size={16} /> Stop</button>
-        <button onClick={startAudio}><Volume2 size={16} /> Audio</button>
+        <button onClick={toggleAudio}>
+          {audioEnabled ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          {audioEnabled ? "Mute" : "Audio"}
+        </button>
       </section>
 
       <section className="controls">
@@ -231,6 +247,17 @@ function App() {
             <option value="on">on</option>
           </select>
         </label>
+        <label>
+          Volume
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={audioVolume}
+            onChange={(event) => setAudioVolume(Number(event.target.value))}
+          />
+        </label>
       </section>
 
       <section className="metrics">
@@ -240,9 +267,19 @@ function App() {
         <div><span>Packets</span><strong>{stream0?.packets ?? 0}</strong></div>
         <div><span>Lost</span><strong>{stream0?.lost_packets ?? 0}</strong></div>
         <div><span>FIFO</span><strong>{stream0?.fifo_overflow_count ?? 0}</strong></div>
+        <div><span>PSD frame</span><strong>{String(status?.psd?.frame_seq ?? "--")}</strong></div>
+        <div><span>Audio</span><strong>{audioEnabled ? `${Math.round(audioVolume * 100)}%` : "off"}</strong></div>
       </section>
 
-      <SpectrumCanvas spectrum={spectrum} />
+      <WidebandWaterfallCanvas
+        psd={wideband}
+        frequency={frequency}
+        bandwidth={bandwidth}
+        onTune={(nextFrequency) => {
+          startRx(nextFrequency).catch((error) => setLog(String(error)));
+        }}
+      />
+      <LocalSpectrumCanvas spectrum={localSpectrum} />
 
       <footer>
         <span>{log}</span>

@@ -43,6 +43,19 @@ class RxConfig:
 
 
 @dataclass(slots=True)
+class PsdConfig:
+    psd_id: int = 0
+    source: str = "adc0"
+    enable: bool = True
+    start_frequency_hz: int = 500_000
+    stop_frequency_hz: int = 108_000_000
+    fft_size: int = 16_384
+    output_bins: int = 4096
+    fps: int = 10
+    sample_format: str = "I16_DBFS_Q8"
+
+
+@dataclass(slots=True)
 class DspConfig:
     audio_sample_rate_hz: int = 48_000
     audio_frame_ms: int = 20
@@ -63,6 +76,7 @@ class AppConfig:
     udp: UdpConfig = field(default_factory=UdpConfig)
     frontend: FrontendConfig = field(default_factory=FrontendConfig)
     rx: RxConfig = field(default_factory=RxConfig)
+    psd: PsdConfig = field(default_factory=PsdConfig)
     dsp: DspConfig = field(default_factory=DspConfig)
     web: WebConfig = field(default_factory=WebConfig)
 
@@ -94,6 +108,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         ("udp", config.udp),
         ("frontend", config.frontend),
         ("rx", config.rx),
+        ("psd", config.psd),
         ("dsp", config.dsp),
         ("web", config.web),
     ):
@@ -101,4 +116,3 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         if isinstance(values, dict):
             _merge_dataclass(section, values)
     return config
-

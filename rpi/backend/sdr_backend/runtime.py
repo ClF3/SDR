@@ -13,6 +13,7 @@ from .broadcast import Broadcaster
 from .config import AppConfig
 from .device_client import DeviceClient
 from .dsp import Demodulator
+from .psd import PsdReassembler
 from .raw_capture import capture_raw
 from .state import AppState
 from .udp_receiver import UdpReceivers
@@ -22,7 +23,11 @@ from .waterfall import WaterfallEngine
 class BackendRuntime:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self.state = AppState(frontend=asdict(config.frontend), rx=asdict(config.rx))
+        self.state = AppState(
+            frontend=asdict(config.frontend),
+            rx=asdict(config.rx),
+            psd=asdict(config.psd),
+        )
         self.device = DeviceClient(config.device, config.udp)
         self.audio = Broadcaster[bytes](max_queue=128)
         self.status = Broadcaster[dict[str, Any]](max_queue=32)
@@ -33,6 +38,7 @@ class BackendRuntime:
             wfm_deemphasis_us=config.dsp.wfm_deemphasis_us,
         )
         self.waterfall = WaterfallEngine(config.dsp.fft_size)
+        self.psd_reassembler = PsdReassembler()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._udp: UdpReceivers | None = None
 
@@ -61,6 +67,12 @@ class BackendRuntime:
         self.state.device_host = self.config.device.host
         self.state.hello = response
         self.status.publish(self.state.snapshot())
+        if self.config.psd.enable:
+            try:
+                await self.set_psd(asdict(self.config.psd))
+            except Exception as exc:
+                self.state.last_error = f"auto set_psd failed: {exc}"
+                self.status.publish(self.state.snapshot())
         return response
 
     async def set_frontend(self, fields: dict[str, Any]) -> dict[str, Any]:
@@ -79,9 +91,23 @@ class BackendRuntime:
         self.status.publish(self.state.snapshot())
         return response
 
+    async def set_psd(self, fields: dict[str, Any] | None = None) -> dict[str, Any]:
+        defaults = asdict(self.config.psd)
+        if fields:
+            defaults.update({key: value for key, value in fields.items() if value is not None})
+        response = await self.device.set_psd(**defaults)
+        applied = response.get("applied", defaults)
+        self.state.psd = {**self.state.psd, **applied}
+        if not applied.get("enable", applied.get("enabled", False)):
+            self.psd_reassembler.reset()
+        self.status.publish(self.state.snapshot())
+        return response
+
     async def stop_all(self) -> dict[str, Any]:
         response = await self.device.stop_all()
         self.state.rx = {**self.state.rx, "enable": False}
+        self.state.psd = {**self.state.psd, "enable": False, "enabled": False}
+        self.psd_reassembler.reset()
         self.status.publish(self.state.snapshot())
         return response
 
@@ -104,16 +130,7 @@ class BackendRuntime:
 
     def _thread_psd(self, header: SdrPsdHeader, payload: bytes) -> None:
         if self._loop:
-            self._loop.call_soon_threadsafe(
-                self.spectrum.publish,
-                {
-                    "type": "psd",
-                    "psd_id": header.psd_id,
-                    "frame_seq": header.frame_seq,
-                    "bin_count": header.bin_count,
-                    "payload_bytes": len(payload),
-                },
-            )
+            self._loop.call_soon_threadsafe(self._handle_psd, header, payload)
 
     def _thread_status(self, status: dict[str, Any]) -> None:
         if self._loop:
@@ -132,6 +149,18 @@ class BackendRuntime:
         if spectrum:
             spectrum["flags"] = header.flags
             self.spectrum.publish(spectrum)
+
+    def _handle_psd(self, header: SdrPsdHeader, payload: bytes) -> None:
+        frame = self.psd_reassembler.ingest(header, payload)
+        if frame:
+            self.state.psd = {
+                **self.state.psd,
+                "enabled": True,
+                "frame_seq": frame["frame_seq"],
+                "dropped_frame_count": frame["dropped_frame_count"],
+                "missing_segment_count": frame["missing_segment_count"],
+            }
+            self.spectrum.publish(frame)
 
     def _handle_status(self, status: dict[str, Any]) -> None:
         self.state.device_status = status

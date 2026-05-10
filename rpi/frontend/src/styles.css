@@ -129,6 +129,16 @@ label select {
   background: #101316;
 }
 
+.spectrum.wideband {
+  min-height: 420px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.spectrum.local {
+  min-height: 180px;
+}
+
 footer {
   justify-content: space-between;
   color: #8c98a3;
@@ -152,4 +162,3 @@ footer {
     width: 100%;
   }
 }
-

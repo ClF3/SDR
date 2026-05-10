@@ -4,7 +4,7 @@ import asyncio
 import socket
 import unittest
 
-from common.protocol import IQ_HEADER_SIZE, SdrIqHeader
+from common.protocol import IQ_HEADER_SIZE, PSD_HEADER_SIZE, SdrIqHeader, SdrPsdHeader
 from rpi.backend.sdr_backend.config import DeviceConfig, UdpConfig
 from rpi.backend.sdr_backend.device_client import DeviceClient
 from simulator.fake_ac920 import FakeAc920Config, FakeAc920Server
@@ -71,7 +71,52 @@ class FakeAc920IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data) - IQ_HEADER_SIZE, header.payload_bytes)
         await client.close()
 
+    async def test_set_psd_and_receive_wideband_segments(self) -> None:
+        psd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        psd_sock.bind(("127.0.0.1", self.psd_port))
+        psd_sock.settimeout(2.0)
+        self.addCleanup(psd_sock.close)
+
+        client = DeviceClient(
+            DeviceConfig(host="127.0.0.1", control_port=self.control_port),
+            UdpConfig(
+                bind_host="127.0.0.1",
+                iq_port=self.iq_port,
+                psd_port=self.psd_port,
+                status_port=self.status_port,
+            ),
+        )
+        hello = await client.connect()
+        self.assertTrue(hello["ok"])
+        response = await client.set_psd(
+            psd_id=0,
+            source="adc0",
+            enable=True,
+            start_frequency_hz=500_000,
+            stop_frequency_hz=108_000_000,
+            fft_size=16_384,
+            output_bins=4096,
+            fps=10,
+            sample_format="I16_DBFS_Q8",
+        )
+        self.assertTrue(response["ok"])
+
+        headers: list[SdrPsdHeader] = []
+        frame_seq = None
+        while len(headers) < 8:
+            data = await asyncio.to_thread(psd_sock.recv, 2048)
+            header = SdrPsdHeader.unpack(data[:PSD_HEADER_SIZE])
+            if frame_seq is None:
+                frame_seq = header.frame_seq
+            if header.frame_seq == frame_seq:
+                headers.append(header)
+                self.assertEqual(len(data) - PSD_HEADER_SIZE, header.payload_bytes)
+
+        self.assertEqual({header.segment_index for header in headers}, set(range(8)))
+        self.assertEqual(headers[0].total_bins, 4096)
+        self.assertEqual(headers[0].bin_count, 512)
+        await client.close()
+
 
 if __name__ == "__main__":
     unittest.main()
-

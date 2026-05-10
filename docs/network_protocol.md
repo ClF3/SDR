@@ -9,7 +9,7 @@ The first implementation target is deliberately simple:
 - one Raspberry Pi backend as the device owner
 - one or two FPGA DDC streams
 - UDP binary IQ data
-- optional UDP binary PSD data
+- UDP binary PSD data for the 0.5-108 MHz wideband waterfall
 - UDP JSON status data
 - TCP JSON control
 - TCP raw ADC capture for debug only
@@ -269,6 +269,12 @@ Response:
     "max_iq_streams": 2,
     "supported_iq_sample_rates_hz": [125000, 250000, 500000, 1000000],
     "supported_sample_formats": ["SC16_LE"],
+    "supported_psd_sources": ["adc0"],
+    "supported_psd_output_bins": [4096],
+    "supported_psd_fps": [10],
+    "supported_psd_sample_formats": ["I16_DBFS_Q8"],
+    "max_psd_segments_per_frame": 8,
+    "max_psd_bins_per_segment": 512,
     "max_udp_payload_bytes": 1200
   }
 }
@@ -484,11 +490,11 @@ Response:
 
 ### 5.7 `set_psd`
 
-Configures the optional FPGA-generated PSD stream.
+Configures the FPGA-generated PSD stream used by the full-band Web waterfall.
+Version 1 fixes the normal wideband mode to `0.5 MHz` through `108 MHz`,
+`4096` output bins, and `10 fps`.
 
-The first Raspberry Pi implementation may use local FFT from the IQ stream
-instead. This command is still defined so the second FPGA phase has a stable
-target.
+An empty Raspberry Pi REST request to `POST /api/psd` maps to the request below.
 
 Request:
 
@@ -510,10 +516,17 @@ Request:
 
 Rules:
 
-- `source` may be `"adc0"`, `"adc1"`, or `"stream0"` in later builds.
-- First wideband PSD target is `"adc0"`.
+- Version 1 requires `source` to be `"adc0"`.
+- Version 1 full-band PSD covers `500000` to `108000000` Hz.
+- Version 1 requires `fft_size` to be `16384`, `output_bins` to be `4096`,
+  and `fps` to be `10`.
 - `sample_format` must be `"I16_DBFS_Q8"` in version 1.
-- `fps` should be clamped to a supported value if necessary.
+- Unsupported values must return `out_of_range` or be reported exactly in
+  `applied` if the implementation clamps to a valid value.
+- Enabling or changing PSD resets `frame_seq` to `0`; the first PSD frame must
+  set `SDR_PSD_FLAG_CONFIG_CHANGED`.
+- `enable=false` stops PSD UDP transmission for `psd_id` and leaves IQ streams
+  unchanged.
 
 Response:
 
@@ -669,8 +682,23 @@ the negotiated `max_udp_payload_bytes`.
 
 ## 7. UDP PSD Stream
 
-PSD is optional in the first bring-up. Local Raspberry Pi FFT from IQ packets is
-allowed for the initial Web waterfall.
+PSD is the formal interface for the full-band Web waterfall. Local Raspberry Pi
+FFT from IQ packets remains available as `local_spectrum`, but it is not a
+replacement for the `0.5-108 MHz` waterfall.
+
+Version 1 fixed full-band PSD packetization:
+
+| Field | Value |
+| --- | ---: |
+| Frequency span | `500000-108000000 Hz` |
+| FFT size | `16384` |
+| Output bins | `4096` |
+| Frame rate | `10 fps` |
+| Bin spacing | `26245.1171875 Hz` |
+| Segments per frame | `8` |
+| Bins per segment | `512` |
+| PSD payload per segment | `1024 bytes` |
+| UDP payload per segment | `1096 bytes` |
 
 ### 7.1 Packet Header
 
@@ -755,6 +783,10 @@ frequency_hz =
     (bin_start + i) * bin_spacing_millihz / 1000.0
 ```
 
+For the fixed full-band mode, receivers should use the configured start/stop
+range for UI scaling and accept the small millihertz rounding error in
+`bin_spacing_millihz`.
+
 ### 7.3 PSD Reassembly
 
 The Raspberry Pi groups PSD segments by:
@@ -767,6 +799,61 @@ A complete PSD frame is available when all segment indices from `0` to
 
 If any segment is missing by the time a newer `frame_seq` arrives, the Raspberry
 Pi should drop the incomplete frame.
+
+Segment rules:
+
+- every segment in a frame has the same `psd_id`, `frame_seq`, `adc_timestamp`,
+  `start_frequency_hz`, `bin_spacing_millihz`, `fft_size`, `total_bins`,
+  `segment_count`, `sample_format`, and `flags`
+- `segment_index` runs from `0` to `7`
+- `segment_count` is `8`
+- `bin_start` is `segment_index * 512`
+- `bin_count` is `512`
+- `payload_bytes` is `1024`
+- segments may arrive out of order
+- receivers must ignore duplicate segments after storing the newest copy
+
+### 7.4 PSD Frame Flags
+
+- `SDR_PSD_FLAG_DISCONTINUITY`: frame continuity is not guaranteed across this
+  frame boundary.
+- `SDR_PSD_FLAG_CONFIG_CHANGED`: this is the first frame after PSD
+  configuration changed.
+- `SDR_PSD_FLAG_OVERFLOW`: FPGA or PS dropped at least one PSD frame before this
+  frame.
+
+### 7.5 Raspberry Pi WebSocket Mapping
+
+After reassembly, the Raspberry Pi publishes full-band PSD on `/ws/spectrum`:
+
+```json
+{
+  "type": "wideband_psd",
+  "psd_id": 0,
+  "frame_seq": 123,
+  "start_frequency_hz": 500000,
+  "stop_frequency_hz": 108000000,
+  "bin_spacing_hz": 26245.1171875,
+  "bins_dbfs": [-92.5, -91.8],
+  "flags": 0,
+  "dropped_frame_count": 0,
+  "missing_segment_count": 0
+}
+```
+
+Local FFT from the selected DDC stream uses the same WebSocket but a different
+message type:
+
+```json
+{
+  "type": "local_spectrum",
+  "center_frequency_hz": 98500000,
+  "sample_rate_hz": 1000000,
+  "bin_spacing_hz": 488.28125,
+  "bins_dbfs": [-80.2, -79.9],
+  "flags": 0
+}
+```
 
 ## 8. UDP Status Stream
 
@@ -817,7 +904,17 @@ Example:
   "psd": [
     {
       "psd_id": 0,
-      "enabled": false
+      "enabled": true,
+      "source": "adc0",
+      "start_frequency_hz": 500000,
+      "stop_frequency_hz": 108000000,
+      "fft_size": 16384,
+      "output_bins": 4096,
+      "fps": 10,
+      "frame_seq": 123,
+      "dropped_frame_count": 0,
+      "missing_segment_count": 0,
+      "overflow_count": 0
     }
   ],
   "network": {
@@ -926,8 +1023,10 @@ These choices are considered fixed for the first implementation:
 - UDP destination is learned from `hello`.
 - IQ packets default to 256 complex samples.
 - ADC timestamp unit is 250 MHz ADC ticks.
+- UDP PSD is the full-band waterfall interface.
+- PSD version 1 is `adc0`, `500000-108000000 Hz`, `16384` point FFT,
+  `4096` bins, `10 fps`, `I16_DBFS_Q8`, split into `8` segments per frame.
 - Raw ADC data is short capture only, never continuous streaming.
-- FPGA-generated PSD is optional for first bring-up.
 
 ## 13. Open Items for Later Versions
 

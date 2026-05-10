@@ -59,6 +59,7 @@ class UdpReceivers:
     def _start_socket(self, name: str, port: int, handler: Callable[[memoryview, int], None]) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(0.05)
         sock.bind((self.bind_host, port))
         self._sockets.append(sock)
         thread = threading.Thread(
@@ -77,6 +78,8 @@ class UdpReceivers:
             try:
                 size, _addr = sock.recvfrom_into(buffer)
                 handler(view[:size], size)
+            except socket.timeout:
+                continue
             except OSError:
                 break
             except Exception as exc:
@@ -98,4 +101,3 @@ class UdpReceivers:
 
     def _handle_status(self, data: memoryview, size: int) -> None:
         self.on_status(json.loads(bytes(data[:size]).decode("utf-8")))
-

@@ -29,7 +29,7 @@ class WaterfallEngine:
         mag = np.abs(spec) / max(float(window.sum()), 1.0)
         dbfs = 20.0 * np.log10(np.maximum(mag, 1e-8))
         return {
-            "type": "spectrum",
+            "type": "local_spectrum",
             "center_frequency_hz": center_frequency_hz,
             "sample_rate_hz": sample_rate_hz,
             "fft_size": int(iq.size),

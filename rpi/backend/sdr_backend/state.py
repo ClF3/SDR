@@ -38,6 +38,7 @@ class AppState:
     device_status: dict[str, Any] | None = None
     frontend: dict[str, Any] = field(default_factory=dict)
     rx: dict[str, Any] = field(default_factory=dict)
+    psd: dict[str, Any] = field(default_factory=dict)
     streams: dict[int, StreamStats] = field(default_factory=dict)
     last_error: str | None = None
 
@@ -73,6 +74,7 @@ class AppState:
             "device_status": self.device_status,
             "frontend": self.frontend,
             "rx": self.rx,
+            "psd": self.psd,
             "streams": {
                 str(stream_id): {
                     "packets": stats.packets,
@@ -91,4 +93,3 @@ class AppState:
             },
             "last_error": self.last_error,
         }
-

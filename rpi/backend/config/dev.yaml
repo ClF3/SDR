@@ -25,6 +25,17 @@ rx:
   sample_format: SC16_LE
   enable: true
 
+psd:
+  psd_id: 0
+  source: adc0
+  enable: true
+  start_frequency_hz: 500000
+  stop_frequency_hz: 108000000
+  fft_size: 16384
+  output_bins: 4096
+  fps: 10
+  sample_format: I16_DBFS_Q8
+
 dsp:
   audio_sample_rate_hz: 48000
   audio_frame_ms: 20
@@ -35,4 +46,3 @@ dsp:
 web:
   host: 0.0.0.0
   port: 8080
-

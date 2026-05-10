@@ -15,7 +15,9 @@ from common.protocol import (
     SDR_IQ_FLAG_CONFIG_CHANGED,
     SDR_IQ_FLAG_DISCONTINUITY,
     SDR_IQ_FLAG_FIFO_OVERFLOW,
+    SDR_PSD_FLAG_CONFIG_CHANGED,
     SdrIqHeader,
+    SdrPsdHeader,
     build_error,
     build_response,
     decode_json_line,
@@ -70,11 +72,27 @@ class FakeAc920Server:
         self._server: asyncio.AbstractServer | None = None
         self._owner: asyncio.StreamWriter | None = None
         self._udp_dest: tuple[str, int] | None = None
+        self._udp_psd_dest: tuple[str, int] | None = None
         self._udp_status_dest: tuple[str, int] | None = None
         self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._tx_task: asyncio.Task[None] | None = None
+        self._psd_task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
         self._status_seq = 0
+        self._psd_config: dict[str, Any] = {
+            "psd_id": 0,
+            "source": "adc0",
+            "enable": False,
+            "enabled": False,
+            "start_frequency_hz": 500_000,
+            "stop_frequency_hz": 108_000_000,
+            "fft_size": 16_384,
+            "output_bins": 4096,
+            "fps": 10,
+            "sample_format": "I16_DBFS_Q8",
+        }
+        self._psd_frame_seq = 0
+        self._psd_first_frame = True
         self._frontend = {"attenuator_db": 10, "lna": "bypass", "filter": "LPF_108M"}
         self._streams: dict[int, StreamState] = {0: StreamState(0), 1: StreamState(1)}
         self._iq_packets_sent = 0
@@ -101,6 +119,8 @@ class FakeAc920Server:
             await self._server.wait_closed()
         if self._tx_task:
             self._tx_task.cancel()
+        if self._psd_task:
+            self._psd_task.cancel()
         if self._status_task:
             self._status_task.cancel()
         self._udp_sock.close()
@@ -137,6 +157,7 @@ class FakeAc920Server:
                 await self._stop_all()
                 self._owner = None
                 self._udp_dest = None
+                self._udp_psd_dest = None
                 self._udp_status_dest = None
             writer.close()
             await writer.wait_closed()
@@ -173,13 +194,7 @@ class FakeAc920Server:
                 await self._stop_all()
                 return build_response(request_id)
             if cmd == "set_psd":
-                return build_response(
-                    request_id,
-                    applied={
-                        "psd_id": int(request.get("psd_id", 0)),
-                        "enabled": bool(request.get("enable", False)),
-                    },
-                )
+                return await self._cmd_set_psd(request_id, request)
             return build_error(request_id, "invalid_command", f"unknown command {cmd}")
         except (TypeError, ValueError) as exc:
             return build_error(request_id, "invalid_field", str(exc))
@@ -192,6 +207,7 @@ class FakeAc920Server:
             return build_error(request_id, "invalid_field", "udp is required")
         dest_ip = str(udp.get("destination_ip") or peer_ip)
         self._udp_dest = (dest_ip, int(udp["iq_port"]))
+        self._udp_psd_dest = (dest_ip, int(udp["psd_port"]))
         self._udp_status_dest = (dest_ip, int(udp["status_port"]))
         return build_response(
             request_id,
@@ -209,6 +225,12 @@ class FakeAc920Server:
                 "max_iq_streams": 2,
                 "supported_iq_sample_rates_hz": [125_000, 250_000, 500_000, 1_000_000],
                 "supported_sample_formats": ["SC16_LE"],
+                "supported_psd_sources": ["adc0"],
+                "supported_psd_output_bins": [4096],
+                "supported_psd_fps": [10],
+                "supported_psd_sample_formats": ["I16_DBFS_Q8"],
+                "max_psd_segments_per_frame": 8,
+                "max_psd_bins_per_segment": 512,
                 "max_udp_payload_bytes": 1200,
             },
         )
@@ -264,9 +286,43 @@ class FakeAc920Server:
             },
         )
 
+    async def _cmd_set_psd(self, request_id: int, request: dict[str, Any]) -> dict[str, Any]:
+        enable = bool(request.get("enable", request.get("enabled", False)))
+        if not enable:
+            self._psd_config["enable"] = False
+            self._psd_config["enabled"] = False
+            return build_response(request_id, applied=dict(self._psd_config))
+
+        applied = {
+            "psd_id": int(request.get("psd_id", 0)),
+            "source": str(request.get("source", "adc0")),
+            "enable": True,
+            "enabled": True,
+            "start_frequency_hz": int(request.get("start_frequency_hz", 500_000)),
+            "stop_frequency_hz": int(request.get("stop_frequency_hz", 108_000_000)),
+            "fft_size": int(request.get("fft_size", 16_384)),
+            "output_bins": int(request.get("output_bins", 4096)),
+            "fps": int(request.get("fps", 10)),
+            "sample_format": str(request.get("sample_format", "I16_DBFS_Q8")),
+        }
+        if applied["source"] != "adc0":
+            return build_error(request_id, "out_of_range", "fake AC920 only supports adc0 PSD")
+        if applied["output_bins"] != 4096:
+            return build_error(request_id, "out_of_range", "fake AC920 only supports 4096 PSD bins")
+        if applied["fps"] != 10:
+            return build_error(request_id, "out_of_range", "fake AC920 only supports 10 fps PSD")
+        self._psd_config = applied
+        self._psd_frame_seq = 0
+        self._psd_first_frame = True
+        if self._psd_task is None or self._psd_task.done():
+            self._psd_task = asyncio.create_task(self._psd_loop())
+        return build_response(request_id, applied=applied)
+
     async def _stop_all(self) -> None:
         for stream in self._streams.values():
             stream.enabled = False
+        self._psd_config["enable"] = False
+        self._psd_config["enabled"] = False
 
     async def _iq_loop(self) -> None:
         while True:
@@ -313,9 +369,70 @@ class FakeAc920Server:
         stream.seq = (stream.seq + 1) & 0xFFFFFFFF
         stream.adc_timestamp = (stream.adc_timestamp + header.next_timestamp_delta) & 0xFFFFFFFFFFFFFFFF
 
+    async def _psd_loop(self) -> None:
+        while True:
+            if not self._psd_config.get("enable") or self._udp_psd_dest is None:
+                await asyncio.sleep(0.05)
+                continue
+            self._send_psd_frame()
+            await asyncio.sleep(1.0 / max(int(self._psd_config.get("fps", 10)), 1))
+
+    def _send_psd_frame(self) -> None:
+        total_bins = int(self._psd_config["output_bins"])
+        bins_per_segment = 512
+        segment_count = total_bins // bins_per_segment
+        start_hz = int(self._psd_config["start_frequency_hz"])
+        stop_hz = int(self._psd_config["stop_frequency_hz"])
+        spacing_millihz = int(round((stop_hz - start_hz) * 1000 / total_bins))
+        bins = self._make_psd_bins_q8(total_bins, start_hz, stop_hz)
+        flags = SDR_PSD_FLAG_CONFIG_CHANGED if self._psd_first_frame else 0
+        self._psd_first_frame = False
+        for segment_index in range(segment_count):
+            bin_start = segment_index * bins_per_segment
+            segment = bins[bin_start:bin_start + bins_per_segment]
+            payload = bytearray()
+            for q8 in segment:
+                payload.extend(int(q8).to_bytes(2, "little", signed=True))
+            header = SdrPsdHeader(
+                psd_id=int(self._psd_config["psd_id"]),
+                frame_seq=self._psd_frame_seq,
+                adc_timestamp=int(self._device_time_ms() * 250_000),
+                start_frequency_hz=start_hz,
+                bin_spacing_millihz=spacing_millihz,
+                fft_size=int(self._psd_config["fft_size"]),
+                total_bins=total_bins,
+                segment_index=segment_index,
+                segment_count=segment_count,
+                bin_start=bin_start,
+                bin_count=bins_per_segment,
+                flags=flags,
+                averaging_count=4,
+                payload_bytes=len(payload),
+            )
+            if self._udp_psd_dest is not None:
+                self._udp_sock.sendto(header.pack() + bytes(payload), self._udp_psd_dest)
+                self._psd_packets_sent += 1
+        self._psd_frame_seq = (self._psd_frame_seq + 1) & 0xFFFFFFFF
+
+    def _make_psd_bins_q8(self, total_bins: int, start_hz: int, stop_hz: int) -> list[int]:
+        span = stop_hz - start_hz
+        carriers = [1_000_000, 7_100_000, 14_200_000, 27_000_000, 88_500_000, 98_500_000]
+        bins: list[int] = []
+        for index in range(total_bins):
+            freq = start_hz + (index + 0.5) * span / total_bins
+            db = -96.0 + 4.0 * ((index * 17) % 31) / 31.0
+            for carrier in carriers:
+                distance_bins = abs(freq - carrier) / (span / total_bins)
+                if distance_bins < 5.0:
+                    db = max(db, -38.0 - distance_bins * 4.5)
+            bins.append(max(-32768, min(32767, int(round(db * 256)))))
+        return bins
+
     async def _status_loop(self) -> None:
         while True:
-            active = any(stream.enabled for stream in self._streams.values())
+            active = any(stream.enabled for stream in self._streams.values()) or bool(
+                self._psd_config.get("enable")
+            )
             if self._udp_status_dest is not None:
                 payload = json.dumps(self._status_object(), separators=(",", ":")).encode("utf-8")
                 self._udp_sock.sendto(payload, self._udp_status_dest)
@@ -356,7 +473,22 @@ class FakeAc920Server:
             },
             "frontend": dict(self._frontend),
             "streams": streams,
-            "psd": [{"psd_id": 0, "enabled": False}],
+            "psd": [
+                {
+                    "psd_id": int(self._psd_config.get("psd_id", 0)),
+                    "enabled": bool(self._psd_config.get("enable")),
+                    "source": self._psd_config.get("source", "adc0"),
+                    "start_frequency_hz": self._psd_config.get("start_frequency_hz"),
+                    "stop_frequency_hz": self._psd_config.get("stop_frequency_hz"),
+                    "fft_size": self._psd_config.get("fft_size"),
+                    "output_bins": self._psd_config.get("output_bins"),
+                    "fps": self._psd_config.get("fps"),
+                    "frame_seq": self._psd_frame_seq,
+                    "dropped_frame_count": 0,
+                    "missing_segment_count": 0,
+                    "overflow_count": 0,
+                }
+            ],
             "network": {
                 "iq_packets_sent": self._iq_packets_sent,
                 "psd_packets_sent": self._psd_packets_sent,
@@ -406,4 +538,3 @@ def main() -> None:
         asyncio.run(async_main())
     except KeyboardInterrupt:
         pass
-

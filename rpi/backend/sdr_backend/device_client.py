@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 
 from common.protocol import build_request, decode_json_line, encode_json_line
@@ -51,8 +52,12 @@ class DeviceClient:
 
     async def close(self) -> None:
         if self._heartbeat_task:
-            self._heartbeat_task.cancel()
+            task = self._heartbeat_task
             self._heartbeat_task = None
+            if task is not asyncio.current_task():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         if self._writer:
             self._writer.close()
             try:
@@ -87,6 +92,9 @@ class DeviceClient:
     async def set_rx(self, **fields: Any) -> dict[str, Any]:
         return await self.request("set_rx", **fields)
 
+    async def set_psd(self, **fields: Any) -> dict[str, Any]:
+        return await self.request("set_psd", **fields)
+
     async def stop_all(self) -> dict[str, Any]:
         return await self.request("stop_all")
 
@@ -103,4 +111,3 @@ class DeviceClient:
             raise
         except Exception:
             await self.close()
-

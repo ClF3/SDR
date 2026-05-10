@@ -32,6 +32,7 @@ class SdrAsgiApp:
             "/api/device/connect",
             "/api/frontend",
             "/api/rx",
+            "/api/psd",
             "/api/stop",
             "/api/raw-capture",
             "/api/debug/routes",
@@ -117,6 +118,11 @@ class SdrAsgiApp:
                 }
                 fields.update({key: value for key, value in body.items() if value is not None})
                 await self._json_response(send, await self.runtime.set_rx(fields))
+                return
+
+            if method == "POST" and path == "/api/psd":
+                body = await self._read_json_body(receive)
+                await self._json_response(send, await self.runtime.set_psd(body))
                 return
 
             if method == "POST" and path == "/api/stop":
