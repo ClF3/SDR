@@ -3,8 +3,11 @@ import { createRoot } from "react-dom/client";
 import { Play, Radio, Square, Volume2, VolumeX, Waves, Wifi } from "lucide-react";
 import {
   LocalSpectrumCanvas,
+  MAX_FREQ,
+  MIN_FREQ,
   WidebandWaterfallCanvas,
   clampFrequency,
+  clampFrequencyRange,
   formatFrequency,
   type LocalSpectrum,
   type SpectrumMessage,
@@ -77,6 +80,7 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSocketRef = useRef<WebSocket | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
+  const psdRangeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     api("/api/status").then(setStatus).catch(() => undefined);
@@ -103,6 +107,9 @@ function App() {
 
   useEffect(() => {
     return () => {
+      if (psdRangeTimerRef.current !== null) {
+        window.clearTimeout(psdRangeTimerRef.current);
+      }
       closeAudio();
     };
   }, []);
@@ -130,9 +137,26 @@ function App() {
     setLog(`rx ${formatFrequency(tunedFrequency)}`);
   }
 
-  async function startPsd() {
-    await api("/api/psd", {});
-    setLog("wideband psd running");
+  async function setPsdRange(startFrequencyHz = MIN_FREQ, stopFrequencyHz = MAX_FREQ) {
+    const [start, stop] = clampFrequencyRange(startFrequencyHz, stopFrequencyHz);
+    await api("/api/psd", {
+      enable: true,
+      start_frequency_hz: start,
+      stop_frequency_hz: stop
+    });
+    setLog(`psd ${formatFrequency(start)}-${formatFrequency(stop)}`);
+  }
+
+  function requestPsdRange(startFrequencyHz: number, stopFrequencyHz: number) {
+    const [start, stop] = clampFrequencyRange(startFrequencyHz, stopFrequencyHz);
+    if (psdRangeTimerRef.current !== null) {
+      window.clearTimeout(psdRangeTimerRef.current);
+    }
+    psdRangeTimerRef.current = window.setTimeout(() => {
+      psdRangeTimerRef.current = null;
+      setPsdRange(start, stop).catch((error) => setLog(String(error)));
+    }, 120);
+    setLog(`zoom ${formatFrequency(start)}-${formatFrequency(stop)}`);
   }
 
   async function stopRx() {
@@ -185,6 +209,7 @@ function App() {
 
   const stream0 = status?.streams?.["0"];
   const adc = status?.device_status?.adc;
+  const psdSpan = wideband ? wideband.stop_frequency_hz - wideband.start_frequency_hz : MAX_FREQ - MIN_FREQ;
 
   return (
     <main>
@@ -205,7 +230,7 @@ function App() {
         </label>
         <button onClick={connect}><Radio size={16} /> Connect</button>
         <button onClick={() => startRx()}><Play size={16} /> Start RX</button>
-        <button onClick={startPsd}><Waves size={16} /> PSD</button>
+        <button onClick={() => setPsdRange()}><Waves size={16} /> Full Band</button>
         <button onClick={stopRx}><Square size={16} /> Stop</button>
         <button onClick={toggleAudio}>
           {audioEnabled ? <VolumeX size={16} /> : <Volume2 size={16} />}
@@ -268,6 +293,8 @@ function App() {
         <div><span>Lost</span><strong>{stream0?.lost_packets ?? 0}</strong></div>
         <div><span>FIFO</span><strong>{stream0?.fifo_overflow_count ?? 0}</strong></div>
         <div><span>PSD frame</span><strong>{String(status?.psd?.frame_seq ?? "--")}</strong></div>
+        <div><span>PSD span</span><strong>{formatFrequency(psdSpan)}</strong></div>
+        <div><span>PSD bin</span><strong>{wideband ? formatFrequency(wideband.bin_spacing_hz) : "--"}</strong></div>
         <div><span>Audio</span><strong>{audioEnabled ? `${Math.round(audioVolume * 100)}%` : "off"}</strong></div>
       </section>
 
@@ -278,6 +305,7 @@ function App() {
         onTune={(nextFrequency) => {
           startRx(nextFrequency).catch((error) => setLog(String(error)));
         }}
+        onRangeChange={requestPsdRange}
       />
       <LocalSpectrumCanvas spectrum={localSpectrum} />
 

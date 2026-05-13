@@ -53,6 +53,7 @@ class PacketProtocolTests(unittest.TestCase):
             bin_start=0,
             bin_count=512,
             payload_bytes=1024,
+            stop_frequency_hz=108_000_000,
         )
         packed = header.pack()
         self.assertEqual(len(packed), PSD_HEADER_SIZE)
@@ -60,8 +61,8 @@ class PacketProtocolTests(unittest.TestCase):
         self.assertEqual(unpacked.frame_seq, 7)
         self.assertEqual(unpacked.bin_count, 512)
         self.assertEqual(unpacked.payload_bytes, 1024)
+        self.assertEqual(unpacked.stop_frequency_hz, 108_000_000)
 
 
 if __name__ == "__main__":
     unittest.main()
-

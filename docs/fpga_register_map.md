@@ -34,7 +34,8 @@ control block base address chosen by the AC920 PS integration.
 
 ## Version 1 Defaults
 
-When AC920 receives `set_psd` with the default full-band request, PS programs:
+When AC920 receives `set_psd`, PS programs the requested range. The default
+full-band request uses:
 
 | Register | Value |
 | --- | ---: |
@@ -55,6 +56,14 @@ bin_spacing_hz = (PSD_STOP_HZ - PSD_START_HZ) / PSD_OUTPUT_BINS
                = 26245.1171875 Hz
 ```
 
+For zoom ROI, PS writes the requested `PSD_START_HZ` and `PSD_STOP_HZ` while
+keeping version 1 `PSD_OUTPUT_BINS = 4096`. For example, `98-99 MHz` gives:
+
+```text
+bin_spacing_hz = (99000000 - 98000000) / 4096
+               = 244.140625 Hz
+```
+
 ## Control Behavior
 
 `set_psd enable=true`:
@@ -65,6 +74,9 @@ bin_spacing_hz = (PSD_STOP_HZ - PSD_START_HZ) / PSD_OUTPUT_BINS
 3. PS writes `PSD_CONTROL.enable=1`.
 4. PL resets `PSD_FRAME_SEQ` to `0`.
 5. The first frame metadata must have `CONFIG_CHANGED`.
+
+Changing only the PSD range follows the same reset sequence and resets
+`PSD_FRAME_SEQ` to `0`.
 
 `set_psd enable=false`:
 
@@ -91,6 +103,7 @@ typedef struct {
     uint32_t frame_seq;
     uint64_t adc_timestamp;
     uint64_t start_frequency_hz;
+    uint64_t stop_frequency_hz;
     uint64_t bin_spacing_millihz;
     uint32_t fft_size;
     uint16_t total_bins;

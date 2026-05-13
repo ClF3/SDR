@@ -130,7 +130,7 @@ class SdrPsdHeader:
     flags: int = 0
     averaging_count: int = 1
     payload_bytes: int = 0
-    reserved0: int = 0
+    stop_frequency_hz: int = 0
 
     def pack(self) -> bytes:
         self.validate()
@@ -154,7 +154,7 @@ class SdrPsdHeader:
             self.flags,
             self.averaging_count,
             self.payload_bytes,
-            self.reserved0,
+            self.stop_frequency_hz,
         )
 
     @classmethod
@@ -182,4 +182,3 @@ class SdrPsdHeader:
             raise PacketError(
                 f"PSD payload_bytes {self.payload_bytes} != bin_count * 2 {expected_payload}"
             )
-

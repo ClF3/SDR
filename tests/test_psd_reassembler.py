@@ -29,6 +29,7 @@ def make_segment(frame_seq: int, segment_index: int) -> tuple[SdrPsdHeader, byte
             bin_start=bin_start,
             bin_count=BINS_PER_SEGMENT,
             payload_bytes=len(payload),
+            stop_frequency_hz=108_000_000,
         ),
         payload,
     )
@@ -88,6 +89,7 @@ class PsdReassemblerTests(unittest.TestCase):
             bin_start=0,
             bin_count=1,
             payload_bytes=2,
+            stop_frequency_hz=108_000_000,
         )
         payload = int(-92.5 * 256).to_bytes(2, "little", signed=True)
         frame = reassembler.ingest(header, payload)
@@ -95,6 +97,29 @@ class PsdReassemblerTests(unittest.TestCase):
         self.assertIsNotNone(frame)
         assert frame is not None
         self.assertEqual(frame["bins_dbfs"], [-92.5])
+
+    def test_uses_header_stop_frequency_for_zoom_roi(self) -> None:
+        reassembler = PsdReassembler()
+        header = SdrPsdHeader(
+            frame_seq=17,
+            start_frequency_hz=98_000_000,
+            bin_spacing_millihz=244_141,
+            fft_size=16_384,
+            total_bins=4096,
+            segment_index=0,
+            segment_count=1,
+            bin_start=0,
+            bin_count=1,
+            payload_bytes=2,
+            stop_frequency_hz=99_000_000,
+        )
+        frame = reassembler.ingest(header, int(-80 * 256).to_bytes(2, "little", signed=True))
+
+        self.assertIsNotNone(frame)
+        assert frame is not None
+        self.assertEqual(frame["start_frequency_hz"], 98_000_000)
+        self.assertEqual(frame["stop_frequency_hz"], 99_000_000)
+        self.assertAlmostEqual(frame["bin_spacing_hz"], 244.140625)
 
 
 if __name__ == "__main__":

@@ -115,6 +115,44 @@ class FakeAc920IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({header.segment_index for header in headers}, set(range(8)))
         self.assertEqual(headers[0].total_bins, 4096)
         self.assertEqual(headers[0].bin_count, 512)
+        self.assertEqual(headers[0].stop_frequency_hz, 108_000_000)
+        await client.close()
+
+    async def test_set_psd_zoom_range_changes_bin_spacing(self) -> None:
+        psd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        psd_sock.bind(("127.0.0.1", self.psd_port))
+        psd_sock.settimeout(2.0)
+        self.addCleanup(psd_sock.close)
+
+        client = DeviceClient(
+            DeviceConfig(host="127.0.0.1", control_port=self.control_port),
+            UdpConfig(
+                bind_host="127.0.0.1",
+                iq_port=self.iq_port,
+                psd_port=self.psd_port,
+                status_port=self.status_port,
+            ),
+        )
+        await client.connect()
+        response = await client.set_psd(
+            psd_id=0,
+            source="adc0",
+            enable=True,
+            start_frequency_hz=98_000_000,
+            stop_frequency_hz=99_000_000,
+            fft_size=16_384,
+            output_bins=4096,
+            fps=10,
+            sample_format="I16_DBFS_Q8",
+        )
+        self.assertTrue(response["ok"])
+
+        data = await asyncio.to_thread(psd_sock.recv, 2048)
+        header = SdrPsdHeader.unpack(data[:PSD_HEADER_SIZE])
+        self.assertEqual(header.start_frequency_hz, 98_000_000)
+        self.assertEqual(header.stop_frequency_hz, 99_000_000)
+        self.assertEqual(header.total_bins, 4096)
+        self.assertLess(header.bin_spacing_millihz, 300_000)
         await client.close()
 
 

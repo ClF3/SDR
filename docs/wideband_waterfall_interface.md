@@ -1,15 +1,16 @@
 # Wideband Waterfall Interface
 
-This document is the FPGA/PS-to-Raspberry Pi contract for the full-band
-`0.5-108 MHz` waterfall. It defines only the interface. It does not prescribe
-or implement FPGA RTL.
+This document is the FPGA/PS-to-Raspberry Pi contract for the Web waterfall.
+It covers both the full-band `0.5-108 MHz` overview and true zoom ROI PSD. It
+defines only the interface. It does not prescribe or implement FPGA RTL.
 
 ## Target
 
 | Item | Version 1 value |
 | --- | ---: |
 | Source | `adc0` |
-| Display span | `500000-108000000 Hz` |
+| Default display span | `500000-108000000 Hz` |
+| Minimum zoom span | `100000 Hz` |
 | FFT size | `16384` |
 | Output bins | `4096` |
 | Output rate | `10 fps` |
@@ -20,7 +21,7 @@ or implement FPGA RTL.
 | Bins per segment | `512` |
 | Payload per segment | `1024 bytes` |
 
-The bin spacing used by the Web UI is:
+The default full-band bin spacing used by the Web UI is:
 
 ```text
 bin_spacing_hz = (108000000 - 500000) / 4096
@@ -29,7 +30,8 @@ bin_spacing_hz = (108000000 - 500000) / 4096
 
 ## Control
 
-The Raspberry Pi enables PSD with TCP JSON Lines command `set_psd`:
+The Raspberry Pi enables default full-band PSD with TCP JSON Lines command
+`set_psd`:
 
 ```json
 {
@@ -50,6 +52,31 @@ The Raspberry Pi enables PSD with TCP JSON Lines command `set_psd`:
 The AC920 response must echo the applied configuration. Unsupported settings
 must either be rejected with `out_of_range` or returned with the actual clamped
 value in `applied`.
+
+For true zoom, the Raspberry Pi sends the same command with a narrower range:
+
+```json
+{
+  "request_id": 10,
+  "cmd": "set_psd",
+  "psd_id": 0,
+  "source": "adc0",
+  "enable": true,
+  "start_frequency_hz": 98000000,
+  "stop_frequency_hz": 99000000,
+  "fft_size": 16384,
+  "output_bins": 4096,
+  "fps": 10,
+  "sample_format": "I16_DBFS_Q8"
+}
+```
+
+That produces:
+
+```text
+bin_spacing_hz = (99000000 - 98000000) / 4096
+               = 244.140625 Hz
+```
 
 To stop the full-band waterfall:
 
@@ -88,7 +115,9 @@ Every datagram is:
 ```
 
 The full UDP payload is `1096` bytes and must stay below the protocol maximum
-of `1200` bytes.
+of `1200` bytes. The 72-byte `SdrPsdHeader` includes both
+`start_frequency_hz` and `stop_frequency_hz`; receivers use those exact
+boundaries for zoom cursor mapping.
 
 ## Frequency Mapping
 
@@ -107,8 +136,9 @@ frequency_hz = start_frequency_hz
 ```
 
 The binary header stores `bin_spacing_millihz` as an integer, so there can be
-sub-Hz rounding in the header value. The Raspberry Pi Web UI uses the configured
-`start_frequency_hz` and `stop_frequency_hz` for cursor mapping.
+sub-Hz rounding in the header value. The Raspberry Pi Web UI uses
+`start_frequency_hz` and `stop_frequency_hz` for cursor mapping and derives
+display spacing from `(stop - start) / total_bins`.
 
 ## Sequence Rules
 
@@ -177,6 +207,11 @@ frequency_hz = start + x / canvas_width * (stop - start)
 
 Dragging only moves the cursor. Releasing the pointer sends one `/api/rx`
 request to tune the current DDC stream.
+
+Mouse wheel or trackpad scroll over the waterfall sends a debounced `/api/psd`
+request with a narrower or wider range. This is true zoom: the fake AC920 and
+future FPGA implementation produce a new 4096-bin PSD over the requested ROI,
+so bin spacing becomes smaller as the span becomes smaller.
 
 ## Acceptance
 

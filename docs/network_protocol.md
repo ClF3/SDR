@@ -275,6 +275,8 @@ Response:
     "supported_psd_sample_formats": ["I16_DBFS_Q8"],
     "max_psd_segments_per_frame": 8,
     "max_psd_bins_per_segment": 512,
+    "min_psd_span_hz": 100000,
+    "max_psd_span_hz": 107500000,
     "max_udp_payload_bytes": 1200
   }
 }
@@ -490,9 +492,10 @@ Response:
 
 ### 5.7 `set_psd`
 
-Configures the FPGA-generated PSD stream used by the full-band Web waterfall.
-Version 1 fixes the normal wideband mode to `0.5 MHz` through `108 MHz`,
-`4096` output bins, and `10 fps`.
+Configures the FPGA-generated PSD stream used by the Web waterfall. Version 1
+default mode is the full `0.5 MHz` through `108 MHz` overview with `4096`
+output bins and `10 fps`. The same command also supports a zoom ROI by changing
+`start_frequency_hz` and `stop_frequency_hz`.
 
 An empty Raspberry Pi REST request to `POST /api/psd` maps to the request below.
 
@@ -517,14 +520,16 @@ Request:
 Rules:
 
 - Version 1 requires `source` to be `"adc0"`.
-- Version 1 full-band PSD covers `500000` to `108000000` Hz.
+- The default full-band PSD covers `500000` to `108000000` Hz.
+- Zoom ROI PSD must remain inside `500000` to `108000000` Hz.
+- Version 1 minimum zoom span is `100000` Hz.
 - Version 1 requires `fft_size` to be `16384`, `output_bins` to be `4096`,
   and `fps` to be `10`.
 - `sample_format` must be `"I16_DBFS_Q8"` in version 1.
 - Unsupported values must return `out_of_range` or be reported exactly in
   `applied` if the implementation clamps to a valid value.
-- Enabling or changing PSD resets `frame_seq` to `0`; the first PSD frame must
-  set `SDR_PSD_FLAG_CONFIG_CHANGED`.
+- Enabling or changing PSD range resets `frame_seq` to `0`; the first PSD frame
+  must set `SDR_PSD_FLAG_CONFIG_CHANGED`.
 - `enable=false` stops PSD UDP transmission for `psd_id` and leaves IQ streams
   unchanged.
 
@@ -754,7 +759,7 @@ typedef struct {
 
     uint32_t payload_bytes;      /* bin_count * 2 for I16_DBFS_Q8 */
 
-    uint64_t reserved0;          /* must be zero */
+    uint64_t stop_frequency_hz;  /* exact right edge of PSD range, Hz */
 } SdrPsdHeader;
 #pragma pack(pop)
 ```
@@ -783,9 +788,14 @@ frequency_hz =
     (bin_start + i) * bin_spacing_millihz / 1000.0
 ```
 
-For the fixed full-band mode, receivers should use the configured start/stop
-range for UI scaling and accept the small millihertz rounding error in
-`bin_spacing_millihz`.
+Receivers should use `start_frequency_hz` and `stop_frequency_hz` for UI range
+mapping. `bin_spacing_millihz` is an integer and may contain sub-Hz rounding.
+
+For zoom ROI:
+
+```text
+bin_spacing_hz = (stop_frequency_hz - start_frequency_hz) / total_bins
+```
 
 ### 7.3 PSD Reassembly
 

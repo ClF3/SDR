@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 export const MIN_FREQ = 500000;
 export const MAX_FREQ = 108000000;
+export const MIN_ZOOM_SPAN_HZ = 100000;
 
 export type LocalSpectrum = {
   type: "local_spectrum";
@@ -29,6 +30,21 @@ export type SpectrumMessage = LocalSpectrum | WidebandPsd;
 
 export function clampFrequency(value: number) {
   return Math.max(MIN_FREQ, Math.min(MAX_FREQ, Math.round(value)));
+}
+
+export function clampFrequencyRange(start: number, stop: number) {
+  const span = Math.max(MIN_ZOOM_SPAN_HZ, Math.min(MAX_FREQ - MIN_FREQ, stop - start));
+  let nextStart = Math.round(start);
+  let nextStop = Math.round(nextStart + span);
+  if (nextStart < MIN_FREQ) {
+    nextStart = MIN_FREQ;
+    nextStop = Math.round(nextStart + span);
+  }
+  if (nextStop > MAX_FREQ) {
+    nextStop = MAX_FREQ;
+    nextStart = Math.round(nextStop - span);
+  }
+  return [nextStart, nextStop] as const;
 }
 
 export function formatFrequency(value: number) {
@@ -74,13 +90,21 @@ type WidebandProps = {
   frequency: number;
   bandwidth: number;
   onTune: (frequency: number) => void;
+  onRangeChange: (startFrequencyHz: number, stopFrequencyHz: number) => void;
 };
 
-export function WidebandWaterfallCanvas({ psd, frequency, bandwidth, onTune }: WidebandProps) {
+export function WidebandWaterfallCanvas({
+  psd,
+  frequency,
+  bandwidth,
+  onTune,
+  onRangeChange
+}: WidebandProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const waterfallRef = useRef<ImageData | null>(null);
   const baseImageRef = useRef<ImageData | null>(null);
   const lastFrameSeqRef = useRef<number | null>(null);
+  const lastRangeRef = useRef<string | null>(null);
   const [cursor, setCursor] = useState<number | null>(frequency);
   const [dragging, setDragging] = useState(false);
 
@@ -99,6 +123,15 @@ export function WidebandWaterfallCanvas({ psd, frequency, bandwidth, onTune }: W
     const rulerHeight = 32;
     const wfTop = traceHeight + rulerHeight;
     const bins = psd.bins_dbfs;
+    const rangeKey = `${psd.start_frequency_hz}:${psd.stop_frequency_hz}`;
+    if (lastRangeRef.current !== rangeKey) {
+      ctx.fillStyle = "#101316";
+      ctx.fillRect(0, 0, width, height);
+      waterfallRef.current = null;
+      baseImageRef.current = null;
+      lastFrameSeqRef.current = null;
+      lastRangeRef.current = rangeKey;
+    }
 
     if (lastFrameSeqRef.current !== psd.frame_seq) {
       ctx.fillStyle = "#101316";
@@ -118,6 +151,18 @@ export function WidebandWaterfallCanvas({ psd, frequency, bandwidth, onTune }: W
     drawOverlay(ctx, psd, cursor ?? frequency, frequency, bandwidth, width, height);
   }, [psd, frequency, bandwidth, cursor]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      applyWheelZoom(event.clientX, event.deltaX, event.deltaY, event.shiftKey);
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [psd, onRangeChange]);
+
   function eventFrequency(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas || !psd) return frequency;
@@ -127,8 +172,42 @@ export function WidebandWaterfallCanvas({ psd, frequency, bandwidth, onTune }: W
     return clampFrequency(psd.start_frequency_hz + fraction * (psd.stop_frequency_hz - psd.start_frequency_hz));
   }
 
+  function applyWheelZoom(clientX: number, deltaX: number, deltaY: number, shiftKey: boolean) {
+    if (!psd) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const fraction = x / Math.max(rect.width, 1);
+    const start = psd.start_frequency_hz;
+    const stop = psd.stop_frequency_hz;
+    const span = stop - start;
+    let nextStart = start;
+    let nextStop = stop;
+
+    if (shiftKey || Math.abs(deltaX) > Math.abs(deltaY)) {
+      const shiftPixels = deltaX || deltaY;
+      const shiftHz = (shiftPixels / Math.max(rect.width, 1)) * span;
+      nextStart = start + shiftHz;
+      nextStop = stop + shiftHz;
+    } else {
+      const zoomFactor = deltaY < 0 ? 0.72 : 1.38;
+      const nextSpan = span * zoomFactor;
+      const center = start + fraction * span;
+      nextStart = center - fraction * nextSpan;
+      nextStop = nextStart + nextSpan;
+    }
+
+    const [clampedStart, clampedStop] = clampFrequencyRange(nextStart, nextStop);
+    if (Math.abs(clampedStart - start) > 1 || Math.abs(clampedStop - stop) > 1) {
+      onRangeChange(clampedStart, clampedStop);
+    }
+  }
+
   function pointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!psd) return;
+    event.preventDefault();
+    event.stopPropagation();
     const next = eventFrequency(event);
     setDragging(true);
     setCursor(next);
@@ -137,11 +216,15 @@ export function WidebandWaterfallCanvas({ psd, frequency, bandwidth, onTune }: W
 
   function pointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragging || !psd) return;
+    event.preventDefault();
+    event.stopPropagation();
     setCursor(eventFrequency(event));
   }
 
   function pointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!psd) return;
+    event.preventDefault();
+    event.stopPropagation();
     const next = eventFrequency(event);
     setDragging(false);
     setCursor(next);
@@ -159,6 +242,7 @@ export function WidebandWaterfallCanvas({ psd, frequency, bandwidth, onTune }: W
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
       onPointerCancel={() => setDragging(false)}
+      onContextMenu={(event) => event.preventDefault()}
     />
   );
 }
@@ -185,7 +269,7 @@ function drawRuler(
 ) {
   ctx.strokeStyle = "#303842";
   ctx.fillStyle = "#9aa5ad";
-  ctx.font = "22px system-ui";
+  ctx.font = "14px system-ui";
   for (let i = 0; i <= 8; i++) {
     const x = (i / 8) * width;
     const freq = start + (i / 8) * (stop - start);
@@ -193,7 +277,7 @@ function drawRuler(
     ctx.moveTo(x, top);
     ctx.lineTo(x, top + 10);
     ctx.stroke();
-    ctx.fillText(formatFrequency(freq), Math.min(width - 110, x + 6), top + 25);
+    ctx.fillText(formatFrequency(freq), Math.min(width - 76, x + 6), top + 22);
   }
 }
 
@@ -220,18 +304,22 @@ function drawOverlay(
   height: number
 ) {
   const span = psd.stop_frequency_hz - psd.start_frequency_hz;
+  if (span <= 0) return;
+  const clampedCursor = Math.max(psd.start_frequency_hz, Math.min(psd.stop_frequency_hz, cursor));
   const tunedX = ((tuned - psd.start_frequency_hz) / span) * width;
-  const cursorX = ((cursor - psd.start_frequency_hz) / span) * width;
+  const cursorX = ((clampedCursor - psd.start_frequency_hz) / span) * width;
   const bwPx = Math.max(2, (bandwidth / span) * width);
 
-  ctx.fillStyle = "rgba(110, 231, 183, 0.14)";
-  ctx.fillRect(tunedX - bwPx / 2, 0, bwPx, height);
-  ctx.strokeStyle = "#6ee7b7";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(tunedX, 0);
-  ctx.lineTo(tunedX, height);
-  ctx.stroke();
+  if (tuned >= psd.start_frequency_hz && tuned <= psd.stop_frequency_hz) {
+    ctx.fillStyle = "rgba(110, 231, 183, 0.14)";
+    ctx.fillRect(tunedX - bwPx / 2, 0, bwPx, height);
+    ctx.strokeStyle = "#6ee7b7";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tunedX, 0);
+    ctx.lineTo(tunedX, height);
+    ctx.stroke();
+  }
 
   ctx.strokeStyle = "#ffd166";
   ctx.beginPath();
@@ -239,6 +327,6 @@ function drawOverlay(
   ctx.lineTo(cursorX, height);
   ctx.stroke();
   ctx.fillStyle = "#ffd166";
-  ctx.font = "24px system-ui";
-  ctx.fillText(formatFrequency(cursor), Math.min(width - 150, cursorX + 8), 28);
+  ctx.font = "15px system-ui";
+  ctx.fillText(formatFrequency(clampedCursor), Math.min(width - 96, cursorX + 8), 24);
 }

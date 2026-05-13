@@ -86,8 +86,8 @@ class PsdReassembler:
         return values
 
     def _frequency_bounds(self, header: SdrPsdHeader) -> tuple[int, int | float, float]:
-        if header.start_frequency_hz == 500_000 and header.total_bins == 4096:
-            stop_frequency_hz = 108_000_000
+        if header.stop_frequency_hz > header.start_frequency_hz:
+            stop_frequency_hz = header.stop_frequency_hz
             return (
                 header.start_frequency_hz,
                 stop_frequency_hz,

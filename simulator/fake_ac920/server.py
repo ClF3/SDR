@@ -231,6 +231,8 @@ class FakeAc920Server:
                 "supported_psd_sample_formats": ["I16_DBFS_Q8"],
                 "max_psd_segments_per_frame": 8,
                 "max_psd_bins_per_segment": 512,
+                "min_psd_span_hz": 100_000,
+                "max_psd_span_hz": 107_500_000,
                 "max_udp_payload_bytes": 1200,
             },
         )
@@ -307,6 +309,10 @@ class FakeAc920Server:
         }
         if applied["source"] != "adc0":
             return build_error(request_id, "out_of_range", "fake AC920 only supports adc0 PSD")
+        if applied["start_frequency_hz"] < 500_000 or applied["stop_frequency_hz"] > 108_000_000:
+            return build_error(request_id, "out_of_range", "PSD range must stay within 0.5-108 MHz")
+        if applied["stop_frequency_hz"] - applied["start_frequency_hz"] < 100_000:
+            return build_error(request_id, "out_of_range", "PSD span must be at least 100 kHz")
         if applied["output_bins"] != 4096:
             return build_error(request_id, "out_of_range", "fake AC920 only supports 4096 PSD bins")
         if applied["fps"] != 10:
@@ -408,6 +414,7 @@ class FakeAc920Server:
                 flags=flags,
                 averaging_count=4,
                 payload_bytes=len(payload),
+                stop_frequency_hz=stop_hz,
             )
             if self._udp_psd_dest is not None:
                 self._udp_sock.sendto(header.pack() + bytes(payload), self._udp_psd_dest)
