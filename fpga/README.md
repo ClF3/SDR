@@ -224,6 +224,27 @@ bash fpga/scripts/prepare_ac920_vendor_project.sh ~/Downloads/AC920_CM3432_DualC
 该命令需要在 Vivado shell 中运行，或先 source `settings64.sh` 让 `vivado`
 出现在 `PATH` 中。
 
+Windows PowerShell 下使用同等脚本：
+
+```powershell
+cd C:\path\to\SDR
+.\fpga\scripts\prepare_ac920_vendor_project.ps1 -VendorDir "$env:USERPROFILE\Downloads\AC920_CM3432_DualChannel_TCP"
+```
+
+注意这是在 PowerShell/cmd 中运行，不是在 Vivado GUI 的 Tcl Console 中运行。
+
+如果 PowerShell 执行策略拦截脚本，可以这样运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\fpga\scripts\prepare_ac920_vendor_project.ps1 -VendorDir "$env:USERPROFILE\Downloads\AC920_CM3432_DualChannel_TCP"
+```
+
+若当前 shell 找不到 Vivado，传入 `vivado.bat` 绝对路径：
+
+```powershell
+.\fpga\scripts\prepare_ac920_vendor_project.ps1 -VendorDir "$env:USERPROFILE\Downloads\AC920_CM3432_DualChannel_TCP" -Vivado "C:\Xilinx\Vivado\2023.2\bin\vivado.bat"
+```
+
 脚本会生成：
 
 ```text
