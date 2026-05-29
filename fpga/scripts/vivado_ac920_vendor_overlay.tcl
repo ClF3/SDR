@@ -22,17 +22,26 @@ if {![file exists $bd_path]} {
     error "Block design does not exist: $bd_path"
 }
 
-proc add_if_exists {files} {
+proc add_required_sources {files} {
+    set missing {}
     set existing {}
     foreach f $files {
-        if {[file exists $f]} {
-            lappend existing $f
+        set normalized [file normalize $f]
+        if {[file exists $normalized]} {
+            lappend existing $normalized
         } else {
-            puts "WARNING: missing source $f"
+            lappend missing $normalized
         }
     }
+    if {[llength $missing] > 0} {
+        puts "ERROR: missing SDR RTL source files:"
+        foreach f $missing {
+            puts "  $f"
+        }
+        error "SDR_REPO_DIR is probably wrong, or this repo checkout does not contain the FPGA RTL files."
+    }
     if {[llength $existing] > 0} {
-        add_files -fileset sources_1 -norecurse $existing
+        import_files -fileset sources_1 -norecurse -force $existing
     }
 }
 
@@ -73,6 +82,7 @@ proc connect_intf_force {src dst} {
 
 puts "AC920 overlay: opening project $project_path"
 open_project $project_path
+catch {close_bd_design [current_bd_design]}
 
 set rtl_files [list \
     [file join $fpga_dir rtl top sdr_vendor_bd_core.v] \
@@ -98,8 +108,14 @@ set rtl_files [list \
 ]
 
 puts "AC920 overlay: adding SDR RTL sources"
-add_if_exists $rtl_files
+add_required_sources $rtl_files
 update_compile_order -fileset sources_1
+
+set sdr_core_files [get_files -quiet -of_objects [get_filesets sources_1] *sdr_vendor_bd_core.v]
+if {[llength $sdr_core_files] == 0} {
+    error "sdr_vendor_bd_core.v was not imported into sources_1; cannot create BD module reference."
+}
+puts "AC920 overlay: using SDR core source [lindex $sdr_core_files 0]"
 
 puts "AC920 overlay: opening block design $bd_path"
 open_bd_design $bd_path
