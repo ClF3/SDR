@@ -71,6 +71,7 @@ proc connect_intf_force {src dst} {
     return 1
 }
 
+puts "AC920 overlay: opening project $project_path"
 open_project $project_path
 
 set rtl_files [list \
@@ -96,24 +97,35 @@ set rtl_files [list \
     [file join $fpga_dir rtl util pulse_sync.v] \
 ]
 
+puts "AC920 overlay: adding SDR RTL sources"
 add_if_exists $rtl_files
 update_compile_order -fileset sources_1
 
+puts "AC920 overlay: opening block design $bd_path"
 open_bd_design $bd_path
 
 if {[llength [get_bd_cells -quiet sdr_vendor_bd_core_0]] == 0} {
+    puts "AC920 overlay: creating module reference sdr_vendor_bd_core_0"
     create_bd_cell -type module -reference sdr_vendor_bd_core sdr_vendor_bd_core_0
+}
+if {[llength [get_bd_cells -quiet sdr_vendor_bd_core_0]] == 0} {
+    error "Failed to create sdr_vendor_bd_core_0. Check that sdr_vendor_bd_core.v was added and recognized by Vivado."
 }
 
 foreach old_cell {fifo2axis_write_0 adc_sample_ctrl_0} {
     set cell [get_bd_cells -quiet $old_cell]
     if {[llength $cell] > 0} {
+        puts "AC920 overlay: deleting old cell $old_cell"
         delete_bd_objs $cell
     }
 }
 
-connect_intf_force sdr_vendor_bd_core_0/M_AXIS axi_dma_0/S_AXIS_S2MM
-connect_intf_force axi_smc/M00_AXI sdr_vendor_bd_core_0/S00_AXI
+if {![connect_intf_force sdr_vendor_bd_core_0/M_AXIS axi_dma_0/S_AXIS_S2MM]} {
+    error "Failed to connect sdr_vendor_bd_core_0/M_AXIS to axi_dma_0/S_AXIS_S2MM"
+}
+if {![connect_intf_force axi_smc/M00_AXI sdr_vendor_bd_core_0/S00_AXI]} {
+    error "Failed to connect axi_smc/M00_AXI to sdr_vendor_bd_core_0/S00_AXI"
+}
 
 connect_pin_force zynq_ultra_ps_e_0/pl_clk1 sdr_vendor_bd_core_0/s00_axi_aclk
 connect_pin_force zynq_ultra_ps_e_0/pl_clk1 sdr_vendor_bd_core_0/M_AXIS_ACLK
@@ -132,11 +144,15 @@ connect_pin_force sdr_vendor_bd_core_0/reg_conf reg_conf_0
 
 assign_bd_address
 set addr_segs [get_bd_addr_segs -quiet zynq_ultra_ps_e_0/Data/SEG_sdr_vendor_bd_core_0*]
+if {[llength $addr_segs] == 0} {
+    puts "WARNING: address segment for sdr_vendor_bd_core_0 was not found; verify Address Editor manually."
+}
 foreach seg $addr_segs {
     catch {set_property offset 0x80000000 $seg}
     catch {set_property range 64K $seg}
 }
 
+puts "AC920 overlay: validating and saving block design"
 validate_bd_design
 save_bd_design
 
