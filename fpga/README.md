@@ -206,6 +206,52 @@ ADC -> sdr_pl_core -> iq_packetizer -> AXI DMA -> DDR -> PS UDP 9001
 
 集成时保留 PS、AXI DMA、GEM/lwIP 的方式；把原 `fifo2axis_write` 的 AXI DMA S_AXIS 输入改接 `m_axis_iq_*`。PS 端收到 DMA buffer 后不需要再拼 IQ 包头，直接把 1088 字节作为 UDP payload 发送到树莓派 IQ 端口。
 
+### AC920 vendor demo overlay
+
+如果本机有 vendor 工程：
+
+```text
+~/Downloads/AC920_CM3432_DualChannel_TCP
+```
+
+可以用脚本直接复制 vendor 工程并套用本项目 SDR 数据路径：
+
+```bash
+cd /Users/tianyi/repos/SDR
+bash fpga/scripts/prepare_ac920_vendor_project.sh ~/Downloads/AC920_CM3432_DualChannel_TCP
+```
+
+该命令需要在 Vivado shell 中运行，或先 source `settings64.sh` 让 `vivado`
+出现在 `PATH` 中。
+
+脚本会生成：
+
+```text
+fpga/build/ac920_vendor_sdr/CM3432_DualChannel_TCP.xpr
+```
+
+这个工程保留 vendor 的 PS/GEM/DDR/clock/reset/XDC/ADC SPI 顶层，只在
+`sys.bd` 中把旧的：
+
+```text
+adc_sample_ctrl_0 + fifo2axis_write_0
+```
+
+替换成：
+
+```text
+sdr_vendor_bd_core_0
+```
+
+然后继续在 Vivado 中跑 `Generate Bitstream`、`Export Hardware` 即可。若
+Vivado 自动连线失败，打开 `sys.bd` 手动检查：
+
+```text
+sdr_vendor_bd_core_0/M_AXIS  -> axi_dma_0/S_AXIS_S2MM
+sdr_vendor_bd_core_0/S00_AXI -> axi_smc/M00_AXI
+din_0/din_comb_0/dvalid_0    -> sdr_vendor_bd_core_0
+```
+
 ## 当前边界
 
 已完成：
