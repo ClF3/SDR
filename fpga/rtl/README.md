@@ -1,4 +1,0 @@
-# RTL
-
-Synthesizable FPGA modules.
-
