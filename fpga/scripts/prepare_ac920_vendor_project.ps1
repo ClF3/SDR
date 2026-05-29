@@ -11,6 +11,52 @@ $FpgaDir = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 $RepoDir = (Resolve-Path (Join-Path $FpgaDir "..")).Path
 $ProjectName = "CM3432_DualChannel_TCP.xpr"
 
+function Resolve-VivadoExecutable {
+    param([string]$VivadoArg)
+
+    $Command = Get-Command $VivadoArg -ErrorAction SilentlyContinue
+    if ($null -ne $Command) {
+        return $Command.Source
+    }
+
+    if (Test-Path -LiteralPath $VivadoArg -PathType Leaf) {
+        return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($VivadoArg)
+    }
+
+    if (Test-Path -LiteralPath $VivadoArg -PathType Container) {
+        foreach ($CandidateName in @("vivado.bat", "vivado.exe")) {
+            $Candidate = Join-Path $VivadoArg $CandidateName
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+                return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Candidate)
+            }
+        }
+    }
+
+    if ($env:XILINX_VIVADO) {
+        foreach ($CandidateName in @("vivado.bat", "vivado.exe")) {
+            $Candidate = Join-Path $env:XILINX_VIVADO (Join-Path "bin" $CandidateName)
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+                return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Candidate)
+            }
+        }
+    }
+
+    $Candidates = @()
+    foreach ($Root in @("C:\Xilinx\Vivado", "D:\Xilinx\Vivado", "C:\Xilinx", "D:\Xilinx")) {
+        if (Test-Path -LiteralPath $Root -PathType Container) {
+            $Candidates += Get-ChildItem -Path $Root -Recurse -Filter vivado.bat -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "\\Vivado\\[^\\]+\\bin\\vivado\.bat$" } |
+                Sort-Object FullName -Descending
+        }
+    }
+
+    if ($Candidates.Count -gt 0) {
+        return $Candidates[0].FullName
+    }
+
+    return $null
+}
+
 if ([string]::IsNullOrWhiteSpace($WorkDir)) {
     $WorkDir = Join-Path $FpgaDir "build\ac920_vendor_sdr"
 }
@@ -24,12 +70,10 @@ if (!(Test-Path -LiteralPath $ProjectPath -PathType Leaf)) {
     Write-Error "Vendor project not found: $ProjectPath`nUsage: .\prepare_ac920_vendor_project.ps1 -VendorDir C:\path\to\AC920_CM3432_DualChannel_TCP"
 }
 
-$VivadoCommand = Get-Command $Vivado -ErrorAction SilentlyContinue
-if ($null -eq $VivadoCommand -and !(Test-Path -LiteralPath $Vivado -PathType Leaf)) {
+$VivadoExe = Resolve-VivadoExecutable $Vivado
+if ($null -eq $VivadoExe) {
     Write-Error "Vivado not found: $Vivado`nRun from a Vivado shell, add Vivado\bin to PATH, or pass -Vivado C:\Xilinx\Vivado\<version>\bin\vivado.bat."
 }
-
-$VivadoExe = if ($null -ne $VivadoCommand) { $VivadoCommand.Source } else { $Vivado }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $WorkDir) | Out-Null
 if (Test-Path -LiteralPath $WorkDir) {

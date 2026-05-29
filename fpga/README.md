@@ -245,6 +245,12 @@ powershell -ExecutionPolicy Bypass -File .\fpga\scripts\prepare_ac920_vendor_pro
 .\fpga\scripts\prepare_ac920_vendor_project.ps1 -VendorDir "$env:USERPROFILE\Downloads\AC920_CM3432_DualChannel_TCP" -Vivado "C:\Xilinx\Vivado\2023.2\bin\vivado.bat"
 ```
 
+如果不确定 Vivado 安装位置，先查找：
+
+```powershell
+Get-ChildItem C:\Xilinx,D:\Xilinx -Recurse -Filter vivado.bat -ErrorAction SilentlyContinue
+```
+
 脚本会生成：
 
 ```text
