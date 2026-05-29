@@ -68,6 +68,7 @@ class DspConfig:
 class WebConfig:
     host: str = "0.0.0.0"
     port: int = 8080
+    static_dir: str = "rpi/frontend/dist"
 
 
 @dataclass(slots=True)

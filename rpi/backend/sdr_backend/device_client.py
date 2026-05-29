@@ -33,20 +33,29 @@ class DeviceClient:
         if host:
             self.device.host = host
         await self.close()
-        self._reader, self._writer = await asyncio.open_connection(
-            self.device.host,
-            self.device.control_port,
-        )
-        hello = await self.request(
-            "hello",
-            protocol_version=1,
-            client_name=self.device.client_name,
-            udp={
-                "iq_port": self.udp.iq_port,
-                "psd_port": self.udp.psd_port,
-                "status_port": self.udp.status_port,
-            },
-        )
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.device.host, self.device.control_port),
+                timeout=5.0,
+            )
+            hello = await self.request(
+                "hello",
+                protocol_version=1,
+                client_name=self.device.client_name,
+                udp={
+                    "iq_port": self.udp.iq_port,
+                    "psd_port": self.udp.psd_port,
+                    "status_port": self.udp.status_port,
+                },
+            )
+        except (OSError, asyncio.TimeoutError) as exc:
+            await self.close()
+            raise DeviceClientError(
+                f"could not connect to {self.device.host}:{self.device.control_port}: {exc}"
+            ) from exc
+        except Exception:
+            await self.close()
+            raise
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         return hello
 

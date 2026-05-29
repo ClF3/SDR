@@ -66,6 +66,12 @@ button:hover {
   background: #222a32;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  color: #78838c;
+  background: #171c22;
+}
+
 label {
   display: flex;
   flex-direction: column;

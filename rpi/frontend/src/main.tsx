@@ -52,14 +52,22 @@ function wsBase() {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${backendHost()}`;
 }
 
-function api(path: string, body?: unknown) {
+async function api(path: string, body?: unknown) {
   return fetch(`${apiBase()}${path}`, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined
-  }).then((response) => {
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return response.json();
+  }).then(async (response) => {
+    const payload = await response.json();
+    if (!response.ok) {
+      const message = payload?.error?.message ?? `${response.status} ${response.statusText}`;
+      throw new Error(message);
+    }
+    if (payload?.ok === false) {
+      const message = payload?.error?.message ?? "request failed";
+      throw new Error(message);
+    }
+    return payload;
   });
 }
 
@@ -83,9 +91,16 @@ function App() {
   const psdRangeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    api("/api/status").then(setStatus).catch(() => undefined);
+    api("/api/status").then((nextStatus) => {
+      setStatus(nextStatus);
+      if (nextStatus.device_host) setHost(nextStatus.device_host);
+    }).catch(() => undefined);
     const ws = new WebSocket(`${wsBase()}/ws/status`);
-    ws.onmessage = (event) => setStatus(JSON.parse(event.data));
+    ws.onmessage = (event) => {
+      const nextStatus = JSON.parse(event.data);
+      setStatus(nextStatus);
+      if (nextStatus.device_host) setHost(nextStatus.device_host);
+    };
     return () => ws.close();
   }, []);
 
@@ -209,6 +224,7 @@ function App() {
 
   const stream0 = status?.streams?.["0"];
   const adc = status?.device_status?.adc;
+  const psdUnavailable = Boolean(status?.psd?.unsupported) || status?.psd?.enable === false;
   const psdSpan = wideband ? wideband.stop_frequency_hz - wideband.start_frequency_hz : MAX_FREQ - MIN_FREQ;
 
   return (
@@ -228,11 +244,17 @@ function App() {
           AC920 host
           <input value={host} onChange={(event) => setHost(event.target.value)} />
         </label>
-        <button onClick={connect}><Radio size={16} /> Connect</button>
-        <button onClick={() => startRx()}><Play size={16} /> Start RX</button>
-        <button onClick={() => setPsdRange()}><Waves size={16} /> Full Band</button>
-        <button onClick={stopRx}><Square size={16} /> Stop</button>
-        <button onClick={toggleAudio}>
+        <button onClick={() => connect().catch((error) => setLog(String(error)))}><Radio size={16} /> Connect</button>
+        <button onClick={() => startRx().catch((error) => setLog(String(error)))}><Play size={16} /> Start RX</button>
+        <button
+          disabled={psdUnavailable}
+          title={psdUnavailable ? "Hardware PSD is disabled; local spectrum stays active" : "Request full-band PSD"}
+          onClick={() => setPsdRange().catch((error) => setLog(String(error)))}
+        >
+          <Waves size={16} /> Full Band
+        </button>
+        <button onClick={() => stopRx().catch((error) => setLog(String(error)))}><Square size={16} /> Stop</button>
+        <button onClick={() => toggleAudio().catch((error) => setLog(String(error)))}>
           {audioEnabled ? <VolumeX size={16} /> : <Volume2 size={16} />}
           {audioEnabled ? "Mute" : "Audio"}
         </button>
@@ -292,7 +314,7 @@ function App() {
         <div><span>Packets</span><strong>{stream0?.packets ?? 0}</strong></div>
         <div><span>Lost</span><strong>{stream0?.lost_packets ?? 0}</strong></div>
         <div><span>FIFO</span><strong>{stream0?.fifo_overflow_count ?? 0}</strong></div>
-        <div><span>PSD frame</span><strong>{String(status?.psd?.frame_seq ?? "--")}</strong></div>
+        <div><span>PSD frame</span><strong>{psdUnavailable ? "local" : String(status?.psd?.frame_seq ?? "--")}</strong></div>
         <div><span>PSD span</span><strong>{formatFrequency(psdSpan)}</strong></div>
         <div><span>PSD bin</span><strong>{wideband ? formatFrequency(wideband.bin_spacing_hz) : "--"}</strong></div>
         <div><span>Audio</span><strong>{audioEnabled ? `${Math.round(audioVolume * 100)}%` : "off"}</strong></div>

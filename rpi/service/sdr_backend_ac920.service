@@ -1,5 +1,5 @@
 [Unit]
-Description=SDR Raspberry Pi WebSDR backend
+Description=SDR Raspberry Pi WebSDR backend for AC920 hardware
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/pi/SDR
 Environment=PYTHONPATH=/home/pi/SDR:/home/pi/SDR/rpi/backend
-ExecStart=/usr/bin/python3 -m sdr_backend --config rpi/backend/config/dev.yaml
+ExecStart=/home/pi/SDR/.venv/bin/python -m sdr_backend --config rpi/backend/config/ac920_hardware.yaml
 Restart=on-failure
 RestartSec=3
 

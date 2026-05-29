@@ -1,0 +1,49 @@
+device:
+  host: 192.168.10.2
+  control_port: 9000
+  raw_capture_port: 9004
+  client_name: rpi-sdr-backend
+
+udp:
+  bind_host: 0.0.0.0
+  iq_port: 9001
+  psd_port: 9002
+  status_port: 9003
+
+frontend:
+  attenuator_db: 10
+  lna: bypass
+  filter: LPF_108M
+
+rx:
+  stream_id: 0
+  adc_channel: 0
+  frequency_hz: 98500000
+  mode: WFM
+  iq_sample_rate_hz: 1000000
+  bandwidth_hz: 250000
+  sample_format: SC16_LE
+  enable: true
+
+psd:
+  psd_id: 0
+  source: adc0
+  enable: false
+  start_frequency_hz: 500000
+  stop_frequency_hz: 108000000
+  fft_size: 16384
+  output_bins: 4096
+  fps: 10
+  sample_format: I16_DBFS_Q8
+
+dsp:
+  audio_sample_rate_hz: 48000
+  audio_frame_ms: 20
+  fft_size: 2048
+  wfm_deemphasis_us: 50.0
+  squelch_db: -80.0
+
+web:
+  host: 0.0.0.0
+  port: 8080
+  static_dir: rpi/frontend/dist

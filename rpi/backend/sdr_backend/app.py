@@ -12,10 +12,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 import json
+import mimetypes
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
 from .config import AppConfig
+from .device_client import DeviceClientError
 from .runtime import BackendRuntime
 
 Scope = dict[str, Any]
@@ -26,8 +29,10 @@ Send = Callable[[Message], Awaitable[None]]
 
 class SdrAsgiApp:
     def __init__(self, config: AppConfig) -> None:
+        self.config = config
         self.runtime = BackendRuntime(config)
         self.routes = [
+            "/",
             "/api/status",
             "/api/device/connect",
             "/api/frontend",
@@ -139,7 +144,17 @@ class SdrAsgiApp:
                 await self._json_response(send, response)
                 return
 
+            if method == "GET" and not path.startswith("/api/"):
+                if await self._static_response(scope, send):
+                    return
+
             await self._json_response(send, {"ok": False, "error": "not found"}, status=404)
+        except DeviceClientError as exc:
+            await self._json_response(
+                send,
+                {"ok": False, "error": {"code": "device_error", "message": str(exc)}},
+                status=502,
+            )
         except Exception as exc:
             await self._json_response(
                 send,
@@ -223,6 +238,48 @@ class SdrAsgiApp:
         except Exception:
             return {}
         return value if isinstance(value, dict) else {}
+
+    async def _static_response(self, scope: Scope, send: Send) -> bool:
+        static_root = Path(self.config.web.static_dir)
+        if not static_root.is_absolute():
+            static_root = Path.cwd() / static_root
+        try:
+            root = static_root.resolve()
+        except OSError:
+            return False
+        if not root.is_dir():
+            return False
+
+        path = str(scope.get("path", "/"))
+        relative = path.lstrip("/") or "index.html"
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return False
+
+        if not candidate.is_file():
+            name = Path(relative).name
+            if "." in name:
+                return False
+            candidate = root / "index.html"
+            if not candidate.is_file():
+                return False
+
+        body = candidate.read_bytes()
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", content_type.encode("ascii") + b"; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+        return True
 
     def _query(self, scope: Scope) -> dict[str, list[str]]:
         raw = scope.get("query_string", b"")

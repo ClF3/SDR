@@ -28,6 +28,7 @@ class BackendRuntime:
             rx=asdict(config.rx),
             psd=asdict(config.psd),
         )
+        self.state.device_host = config.device.host
         self.device = DeviceClient(config.device, config.udp)
         self.audio = Broadcaster[bytes](max_queue=128)
         self.status = Broadcaster[dict[str, Any]](max_queue=32)
@@ -62,10 +63,18 @@ class BackendRuntime:
             self._udp.stop()
 
     async def connect_device(self, host: str | None = None) -> dict[str, Any]:
-        response = await self.device.connect(host)
+        try:
+            response = await self.device.connect(host)
+        except Exception as exc:
+            self.state.connected = False
+            self.state.device_host = self.config.device.host
+            self.state.last_error = str(exc)
+            self.status.publish(self.state.snapshot())
+            raise
         self.state.connected = True
         self.state.device_host = self.config.device.host
         self.state.hello = response
+        self.state.last_error = None
         self.status.publish(self.state.snapshot())
         if self.config.psd.enable:
             try:
@@ -95,6 +104,17 @@ class BackendRuntime:
         defaults = asdict(self.config.psd)
         if fields:
             defaults.update({key: value for key, value in fields.items() if value is not None})
+        if defaults.get("enable", True) and not self.config.psd.enable:
+            message = "hardware PSD is disabled in backend config; using local IQ spectrum"
+            applied = {**defaults, "enable": False, "enabled": False, "unsupported": True}
+            self.state.psd = {**self.state.psd, **applied}
+            self.state.last_error = message
+            self.status.publish(self.state.snapshot())
+            return {
+                "ok": False,
+                "error": {"code": "invalid_command", "message": message},
+                "applied": applied,
+            }
         response = await self.device.set_psd(**defaults)
         applied = response.get("applied", defaults)
         self.state.psd = {**self.state.psd, **applied}
@@ -122,6 +142,7 @@ class BackendRuntime:
         )
 
     def snapshot(self) -> dict[str, Any]:
+        self.state.connected = self.device.connected
         return self.state.snapshot()
 
     def _thread_iq(self, header: SdrIqHeader, payload: bytes) -> None:

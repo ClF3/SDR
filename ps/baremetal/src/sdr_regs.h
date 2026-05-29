@@ -1,0 +1,61 @@
+#ifndef SDR_REGS_H
+#define SDR_REGS_H
+
+#include <stdint.h>
+
+#define SDR_ADC_SAMPLE_RATE_HZ 250000000ULL
+#define SDR_PROTOCOL_VERSION 1U
+
+#define SDR_CORE_ID_EXPECTED 0x53445231U
+#define SDR_CORE_VERSION_EXPECTED 0x00010000U
+
+#define SDR_REG_CORE_ID 0x000U
+#define SDR_REG_CORE_VERSION 0x004U
+#define SDR_REG_CONTROL 0x008U
+#define SDR_REG_ADC_STATUS 0x00cU
+#define SDR_REG_ADC_PEAK 0x010U
+#define SDR_REG_ADC_RMS 0x014U
+#define SDR_REG_OR_COUNT 0x018U
+#define SDR_REG_CLIP_COUNT 0x01cU
+#define SDR_REG_CLEAR_COUNTS 0x020U
+
+#define SDR_REG_DDC0_CONTROL 0x100U
+#define SDR_REG_DDC0_FREQ_WORD 0x104U
+#define SDR_REG_DDC0_DECIM 0x108U
+#define SDR_REG_DDC0_GAIN 0x10cU
+#define SDR_REG_DDC0_SAMPLES 0x110U
+#define SDR_REG_DDC0_OVERFLOW 0x114U
+#define SDR_REG_DDC0_FREQ_HZ_L 0x118U
+#define SDR_REG_DDC0_FREQ_HZ_H 0x11cU
+#define SDR_REG_DDC0_IQ_RATE 0x120U
+#define SDR_REG_DDC0_BANDWIDTH 0x124U
+#define SDR_REG_DDC0_GAIN_DB 0x128U
+
+#define SDR_CONTROL_CORE_ENABLE 0x00000001U
+#define SDR_CONTROL_SOFT_RESET 0x00000002U
+#define SDR_CONTROL_ADC_OFFSET_BINARY 0x00000004U
+
+#define SDR_ADC_STATUS_ENABLE 0x00000001U
+#define SDR_ADC_STATUS_LOCKED 0x00000002U
+#define SDR_ADC_STATUS_OR 0x00000004U
+
+#define SDR_DDC_CONTROL_ENABLE 0x00000001U
+#define SDR_DDC_CONTROL_ADC_CHANNEL 0x00000002U
+
+#define SDR_IQ_HEADER_BYTES 64U
+#define SDR_IQ_PAYLOAD_BYTES 1024U
+#define SDR_IQ_PACKET_BYTES (SDR_IQ_HEADER_BYTES + SDR_IQ_PAYLOAD_BYTES)
+
+static inline uint32_t sdr_freq_word(uint64_t frequency_hz) {
+    return (uint32_t)(((frequency_hz << 32) + (SDR_ADC_SAMPLE_RATE_HZ / 2ULL)) /
+                      SDR_ADC_SAMPLE_RATE_HZ);
+}
+
+static inline uint32_t sdr_decimation_for_rate(uint32_t iq_sample_rate_hz) {
+    if (iq_sample_rate_hz == 0U) {
+        return 0U;
+    }
+    return (uint32_t)(SDR_ADC_SAMPLE_RATE_HZ / (uint64_t)iq_sample_rate_hz);
+}
+
+#endif
