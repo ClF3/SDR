@@ -46,6 +46,11 @@ SDR_WEAK void sdr_hw_read_status(sdr_hw_status_t *status) {
     status->adc_rms = sdr_hw_read_reg(SDR_REG_ADC_RMS);
     status->or_count = sdr_hw_read_reg(SDR_REG_OR_COUNT);
     status->clip_count = sdr_hw_read_reg(SDR_REG_CLIP_COUNT);
+    status->adc_timestamp = (uint64_t)sdr_hw_read_reg(SDR_REG_ADC_TIMESTAMP_L) |
+                            ((uint64_t)sdr_hw_read_reg(SDR_REG_ADC_TIMESTAMP_H) << 32);
+    status->adc_debug_flags = sdr_hw_read_reg(SDR_REG_ADC_DEBUG_FLAGS);
+    status->adc_dvalid_count = sdr_hw_read_reg(SDR_REG_ADC_DVALID_COUNT);
+    status->adc_cfg_update_count = sdr_hw_read_reg(SDR_REG_ADC_CFG_UPDATE_COUNT);
     status->ddc0_samples = sdr_hw_read_reg(SDR_REG_DDC0_SAMPLES);
     status->ddc0_overflow = sdr_hw_read_reg(SDR_REG_DDC0_OVERFLOW);
 }

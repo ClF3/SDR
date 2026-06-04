@@ -44,6 +44,10 @@ module axi_lite_slave (
     input  wire [31:0] adc_rms_power,
     input  wire [31:0] adc_or_count,
     input  wire [31:0] adc_clip_count,
+    input  wire [63:0] adc_timestamp,
+    input  wire [31:0] adc_debug_flags,
+    input  wire [31:0] adc_dvalid_count,
+    input  wire [31:0] adc_cfg_update_count,
     input  wire [31:0] ddc0_sample_count,
     input  wire [31:0] ddc0_overflow_count
 );
@@ -135,6 +139,10 @@ module axi_lite_slave (
         .adc_rms_power(adc_rms_power),
         .adc_or_count(adc_or_count),
         .adc_clip_count(adc_clip_count),
+        .adc_timestamp(adc_timestamp),
+        .adc_debug_flags(adc_debug_flags),
+        .adc_dvalid_count(adc_dvalid_count),
+        .adc_cfg_update_count(adc_cfg_update_count),
         .ddc0_sample_count(ddc0_sample_count),
         .ddc0_overflow_count(ddc0_overflow_count)
     );

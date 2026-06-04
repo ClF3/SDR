@@ -20,6 +20,10 @@ typedef struct {
     uint32_t adc_rms;
     uint32_t or_count;
     uint32_t clip_count;
+    uint64_t adc_timestamp;
+    uint32_t adc_debug_flags;
+    uint32_t adc_dvalid_count;
+    uint32_t adc_cfg_update_count;
     uint32_t ddc0_samples;
     uint32_t ddc0_overflow;
 } sdr_hw_status_t;

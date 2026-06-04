@@ -90,6 +90,7 @@ module sdr_top (
     wire [31:0] adc_rms_power;
     wire [31:0] adc_or_count;
     wire [31:0] adc_clip_count;
+    wire [31:0] adc_debug_flags;
     wire [31:0] ddc0_sample_count;
     wire [31:0] ddc0_overflow_count;
     wire        iq_clip;
@@ -101,11 +102,25 @@ module sdr_top (
     wire        iq_adc_tlast;
     wire [IQ_AXIS_WIDTH-1:0] iq_async_s_tdata;
     wire [IQ_AXIS_WIDTH-1:0] iq_async_m_tdata;
+    reg  [31:0] adc_dvalid_count;
+    reg  [31:0] adc_cfg_update_count;
 
     assign adc_locked = adc_sample_valid;
     assign adc_or_tied_off = 1'b0;
     assign iq_async_s_tdata = {iq_adc_tlast, iq_adc_tkeep, iq_adc_tdata};
     assign {m_axis_iq_tlast, m_axis_iq_tkeep, m_axis_iq_tdata} = iq_async_m_tdata;
+    assign adc_debug_flags = {
+        23'd0,
+        m_axis_iq_tready,
+        iq_adc_tready,
+        iq_adc_tvalid,
+        adc_sample_valid,
+        ddc0_enable_adc,
+        core_enable_adc,
+        cfg_update_adc,
+        clear_counts_adc,
+        adc_rst
+    };
 
     assign cfg_ctrl = {
         ddc0_gain_db_q8_ctrl,
@@ -212,6 +227,10 @@ module sdr_top (
         .adc_rms_power(adc_rms_power),
         .adc_or_count(adc_or_count),
         .adc_clip_count(adc_clip_count),
+        .adc_timestamp(adc_timestamp),
+        .adc_debug_flags(adc_debug_flags),
+        .adc_dvalid_count(adc_dvalid_count),
+        .adc_cfg_update_count(adc_cfg_update_count),
         .ddc0_sample_count(ddc0_sample_count),
         .ddc0_overflow_count(ddc0_overflow_count)
     );
@@ -237,6 +256,25 @@ module sdr_top (
         .dst_rst(adc_rst),
         .dst_pulse(clear_counts_adc)
     );
+
+    always @(posedge adc_sample_clk) begin
+        if (adc_rst) begin
+            adc_dvalid_count     <= 32'd0;
+            adc_cfg_update_count <= 32'd0;
+        end else begin
+            if (clear_counts_adc) begin
+                adc_dvalid_count     <= 32'd0;
+                adc_cfg_update_count <= 32'd0;
+            end else begin
+                if (adc_sample_valid) begin
+                    adc_dvalid_count <= adc_dvalid_count + 32'd1;
+                end
+                if (cfg_update_adc) begin
+                    adc_cfg_update_count <= adc_cfg_update_count + 32'd1;
+                end
+            end
+        end
+    end
 
     sdr_pl_core u_sdr_pl_core (
         .clk(adc_sample_clk),

@@ -22,6 +22,42 @@ Expected successful path:
 If step 1 fails, the FPGA bitstream alone is not enough: the AC920 PS must also
 run the TCP/UDP bridge firmware or Linux application.
 
+## AC920 Board Bring-Up
+
+On the Windows/JTAG host, after the AC920 has been cleanly power-cycled:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\bringup_ac920_board.ps1
+```
+
+The script programs the latest AC920 SDR bitstream, downloads and starts the
+latest `ac920_sdr_bridge.elf`, waits for lwIP startup, then runs the TCP/UDP
+probe. Useful options:
+
+```powershell
+# Program and start the board, but do not run the PC-side network probe.
+powershell -ExecutionPolicy Bypass -File .\tools\bringup_ac920_board.ps1 -SkipProbe
+
+# Program only the PL bitstream, keeping the current PS program state.
+powershell -ExecutionPolicy Bypass -File .\tools\bringup_ac920_board.ps1 -ProgramOnly
+```
+
+Current board validation status:
+
+- TCP control on `9000`, UDP status on `9003`, and UDP IQ on `9001` have been
+  verified on hardware.
+- The verified IQ stream is generated from the temporary synthetic ADC source
+  in PL. This proves the packetizer, AXI DMA, PS/lwIP, and network path.
+- Real ACFL3432 ADC sample ingress is not yet verified; the debug counter
+  `adc_dvalid_count` remains zero on the tested board.
+
+For Raspberry Pi hardware validation, configure the Pi Ethernet interface as
+`192.168.10.1/24`, connect it directly to the AC920 PS Ethernet, then run:
+
+```sh
+python3 tools/network_probe.py 192.168.10.2 --skip-psd --destination-ip 192.168.10.1
+```
+
 For local RTL/network co-simulation, start the Verilated endpoint first:
 
 ```sh

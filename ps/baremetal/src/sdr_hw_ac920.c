@@ -10,6 +10,7 @@
 #include "xaxidma.h"
 #include "xil_cache.h"
 #include "xil_io.h"
+#include "xiltimer.h"
 #include "xparameters.h"
 #include "xstatus.h"
 
@@ -20,6 +21,8 @@
 #define SDR_AXI_BASEADDR XPAR_SDR_TOP_0_S_AXI_BASEADDR
 #elif defined(XPAR_SDR_VENDOR_BD_CORE_0_S00_AXI_BASEADDR)
 #define SDR_AXI_BASEADDR XPAR_SDR_VENDOR_BD_CORE_0_S00_AXI_BASEADDR
+#elif defined(XPAR_SDR_VENDOR_BD_CORE_0_BASEADDR)
+#define SDR_AXI_BASEADDR XPAR_SDR_VENDOR_BD_CORE_0_BASEADDR
 #elif defined(XPAR_SDR_TOP_0_BASEADDR)
 #define SDR_AXI_BASEADDR XPAR_SDR_TOP_0_BASEADDR
 #elif defined(XPAR_SDR_PL_CORE_0_S_AXI_BASEADDR)
@@ -34,8 +37,16 @@
 #define SDR_AXI_DMA_DEVICE_ID XPAR_AXIDMA_0_DEVICE_ID
 #elif defined(XPAR_AXI_DMA_0_DEVICE_ID)
 #define SDR_AXI_DMA_DEVICE_ID XPAR_AXI_DMA_0_DEVICE_ID
-#else
-#error "Define SDR_AXI_DMA_DEVICE_ID to the AXI DMA device id from xparameters.h"
+#endif
+#endif
+
+#ifndef SDR_AXI_DMA_BASEADDR
+#if defined(XPAR_XAXIDMA_0_BASEADDR)
+#define SDR_AXI_DMA_BASEADDR XPAR_XAXIDMA_0_BASEADDR
+#elif defined(XPAR_AXI_DMA_0_BASEADDR)
+#define SDR_AXI_DMA_BASEADDR XPAR_AXI_DMA_0_BASEADDR
+#elif defined(XPAR_AXIDMA_0_BASEADDR)
+#define SDR_AXI_DMA_BASEADDR XPAR_AXIDMA_0_BASEADDR
 #endif
 #endif
 
@@ -55,6 +66,13 @@ static ip_addr_t g_udp_addr;
 static uint16_t g_iq_port;
 static uint16_t g_status_port;
 static uint64_t g_last_status_ms;
+
+static uint64_t sdr_time_millis(void) {
+    XTime now;
+
+    XTime_GetTime(&now);
+    return ((uint64_t)now * 1000ULL) / (uint64_t)COUNTS_PER_SECOND;
+}
 
 static int sdr_arm_iq_dma(void) {
     int status;
@@ -100,7 +118,20 @@ int sdr_hw_init(void) {
     XAxiDma_Config *dma_config;
     int status;
 
+#ifdef SDT
+#ifndef SDR_AXI_DMA_BASEADDR
+#error "Define SDR_AXI_DMA_BASEADDR to the AXI DMA base address from xparameters.h"
+#endif
+    dma_config = XAxiDma_LookupConfig((UINTPTR)SDR_AXI_DMA_BASEADDR);
+#else
+#ifdef SDR_AXI_DMA_DEVICE_ID
     dma_config = XAxiDma_LookupConfig(SDR_AXI_DMA_DEVICE_ID);
+#elif defined(SDR_AXI_DMA_BASEADDR)
+    dma_config = XAxiDma_LookupConfigBaseAddr((UINTPTR)SDR_AXI_DMA_BASEADDR);
+#else
+#error "Define SDR_AXI_DMA_DEVICE_ID or SDR_AXI_DMA_BASEADDR for AXI DMA from xparameters.h"
+#endif
+#endif
     if (dma_config == NULL) {
         return -1;
     }
@@ -130,7 +161,12 @@ int sdr_hw_init(void) {
 }
 
 uint64_t sdr_hw_millis(void) {
-    return (uint64_t)sys_now();
+    return sdr_time_millis();
+}
+
+u32_t sys_now(void) __attribute__((weak));
+u32_t sys_now(void) {
+    return (u32_t)sdr_time_millis();
 }
 
 uint32_t sdr_hw_read_reg(uint32_t offset) {
@@ -153,6 +189,11 @@ void sdr_hw_read_status(sdr_hw_status_t *status) {
     status->adc_rms = sdr_hw_read_reg(SDR_REG_ADC_RMS);
     status->or_count = sdr_hw_read_reg(SDR_REG_OR_COUNT);
     status->clip_count = sdr_hw_read_reg(SDR_REG_CLIP_COUNT);
+    status->adc_timestamp = (uint64_t)sdr_hw_read_reg(SDR_REG_ADC_TIMESTAMP_L) |
+                            ((uint64_t)sdr_hw_read_reg(SDR_REG_ADC_TIMESTAMP_H) << 32);
+    status->adc_debug_flags = sdr_hw_read_reg(SDR_REG_ADC_DEBUG_FLAGS);
+    status->adc_dvalid_count = sdr_hw_read_reg(SDR_REG_ADC_DVALID_COUNT);
+    status->adc_cfg_update_count = sdr_hw_read_reg(SDR_REG_ADC_CFG_UPDATE_COUNT);
     status->ddc0_samples = sdr_hw_read_reg(SDR_REG_DDC0_SAMPLES);
     status->ddc0_overflow = sdr_hw_read_reg(SDR_REG_DDC0_OVERFLOW);
 }

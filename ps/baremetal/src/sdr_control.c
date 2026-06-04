@@ -479,6 +479,9 @@ size_t sdr_control_build_status_json(
         payload,
         payload_size,
         "{\"type\":\"status\",\"protocol_version\":1,\"seq\":%u,\"device_time_ms\":%llu,"
+        "\"hw\":{\"core_id\":%u,\"core_version\":%u,\"control\":%u,\"adc_status\":%u,\"adc_timestamp\":%llu,"
+        "\"adc_debug_flags\":%u,\"adc_dvalid_count\":%u,\"adc_cfg_update_count\":%u,"
+        "\"ddc0_samples\":%u,\"ddc0_overflow\":%u},"
         "\"adc_sample_rate_hz\":250000000,"
         "\"adc\":{\"channel\":%d,\"peak_dbfs\":%d,\"rms_dbfs\":%d,\"or_count\":%u,\"clip_count\":%u,"
         "\"locked\":%s,\"peak_raw\":%u,\"rms_raw\":%u},"
@@ -491,6 +494,16 @@ size_t sdr_control_build_status_json(
         "\"iq_fifo_overflow_count\":%u,\"iq_forward_errors\":%u}}\n",
         control->status_seq,
         (unsigned long long)sdr_hw_millis(),
+        hw.core_id,
+        hw.core_version,
+        hw.control,
+        hw.adc_status,
+        (unsigned long long)hw.adc_timestamp,
+        hw.adc_debug_flags,
+        hw.adc_dvalid_count,
+        hw.adc_cfg_update_count,
+        hw.ddc0_samples,
+        hw.ddc0_overflow,
         control->rx.adc_channel,
         adc_peak_dbfs,
         adc_rms_dbfs,

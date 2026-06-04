@@ -87,12 +87,42 @@ if ($RoboCopyStatus -ge 8) {
     Write-Error "robocopy failed with exit code $RoboCopyStatus"
 }
 
+$PatchedAdcCtrl = Join-Path $FpgaDir "rtl\vendor\acfl3432\ACFL3432_ctrl.v"
+$VendorAdcCtrl = Join-Path $WorkDir "CM3432_DualChannel_TCP.srcs\sources_1\new\3432\ACFL3432_ctrl.v"
+if (Test-Path -LiteralPath $PatchedAdcCtrl -PathType Leaf) {
+    if (!(Test-Path -LiteralPath (Split-Path -Parent $VendorAdcCtrl) -PathType Container)) {
+        Write-Error "Copied vendor project is missing the ACFL3432 source directory: $(Split-Path -Parent $VendorAdcCtrl)"
+    }
+    Copy-Item -LiteralPath $PatchedAdcCtrl -Destination $VendorAdcCtrl -Force
+    Write-Host "Applied patched ACFL3432_ctrl.v:"
+    Write-Host "  $VendorAdcCtrl"
+}
+
 $env:AC920_PROJECT = Join-Path $WorkDir $ProjectName
 $env:SDR_REPO_DIR = $RepoDir
+$env:PWD = $RepoDir
 
-& $VivadoExe -mode batch -source $OverlayScript
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+$VivadoLog = Join-Path $WorkDir "ac920_overlay_vivado.log"
+$VivadoJournal = Join-Path $WorkDir "ac920_overlay_vivado.jou"
+
+Push-Location -LiteralPath $RepoDir
+try {
+    & $VivadoExe -mode batch -source $OverlayScript -log $VivadoLog -journal $VivadoJournal
+    $VivadoStatus = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+if ($VivadoStatus -ne 0) {
+    Write-Error "Vivado overlay failed with exit code $VivadoStatus. See log: $VivadoLog"
+}
+
+if (!(Test-Path -LiteralPath $VivadoLog -PathType Leaf)) {
+    Write-Error "Vivado did not create the expected log file: $VivadoLog"
+}
+
+$VivadoLogText = Get-Content -LiteralPath $VivadoLog -Raw
+if ($VivadoLogText -notmatch "AC920 vendor overlay complete\.") {
+    Write-Error "Vivado did not complete the AC920 overlay. See log: $VivadoLog"
 }
 
 Write-Host ""

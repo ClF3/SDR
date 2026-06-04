@@ -34,6 +34,10 @@ module csr_regfile (
     input  wire [31:0] adc_rms_power,
     input  wire [31:0] adc_or_count,
     input  wire [31:0] adc_clip_count,
+    input  wire [63:0] adc_timestamp,
+    input  wire [31:0] adc_debug_flags,
+    input  wire [31:0] adc_dvalid_count,
+    input  wire [31:0] adc_cfg_update_count,
     input  wire [31:0] ddc0_sample_count,
     input  wire [31:0] ddc0_overflow_count
 );
@@ -49,6 +53,11 @@ module csr_regfile (
     localparam A_OR_COUNT       = 12'h018;
     localparam A_CLIP_COUNT     = 12'h01c;
     localparam A_CLEAR_COUNTS   = 12'h020;
+    localparam A_ADC_TIMESTAMP_L = 12'h024;
+    localparam A_ADC_TIMESTAMP_H = 12'h028;
+    localparam A_ADC_DEBUG_FLAGS = 12'h02c;
+    localparam A_ADC_DVALID_COUNT = 12'h030;
+    localparam A_ADC_CFG_UPDATE_COUNT = 12'h034;
 
     localparam A_DDC0_CONTROL   = 12'h100;
     localparam A_DDC0_FREQ_WORD = 12'h104;
@@ -199,6 +208,11 @@ module csr_regfile (
             A_ADC_RMS:        rd_data = adc_rms_power;
             A_OR_COUNT:       rd_data = adc_or_count;
             A_CLIP_COUNT:     rd_data = adc_clip_count;
+            A_ADC_TIMESTAMP_L: rd_data = adc_timestamp[31:0];
+            A_ADC_TIMESTAMP_H: rd_data = adc_timestamp[63:32];
+            A_ADC_DEBUG_FLAGS: rd_data = adc_debug_flags;
+            A_ADC_DVALID_COUNT: rd_data = adc_dvalid_count;
+            A_ADC_CFG_UPDATE_COUNT: rd_data = adc_cfg_update_count;
             A_DDC0_CONTROL:   rd_data = ddc0_control_reg;
             A_DDC0_FREQ_WORD: rd_data = ddc0_freq_word_reg;
             A_DDC0_DECIM:     rd_data = ddc0_decim_reg;

@@ -26,10 +26,36 @@ mkdir -p "$(dirname "${WORK_DIR}")"
 rm -rf "${WORK_DIR}"
 rsync -a --exclude '.DS_Store' "${VENDOR_DIR}/" "${WORK_DIR}/"
 
+PATCHED_ADC_CTRL="${FPGA_DIR}/rtl/vendor/acfl3432/ACFL3432_ctrl.v"
+VENDOR_ADC_CTRL="${WORK_DIR}/CM3432_DualChannel_TCP.srcs/sources_1/new/3432/ACFL3432_ctrl.v"
+if [[ -f "${PATCHED_ADC_CTRL}" ]]; then
+  if [[ ! -d "$(dirname "${VENDOR_ADC_CTRL}")" ]]; then
+    echo "Copied vendor project is missing the ACFL3432 source directory: $(dirname "${VENDOR_ADC_CTRL}")" >&2
+    exit 1
+  fi
+  cp "${PATCHED_ADC_CTRL}" "${VENDOR_ADC_CTRL}"
+  echo "Applied patched ACFL3432_ctrl.v:"
+  echo "  ${VENDOR_ADC_CTRL}"
+fi
+
 export AC920_PROJECT="${WORK_DIR}/${PROJECT_NAME}"
 export SDR_REPO_DIR="${REPO_DIR}"
+export PWD="${REPO_DIR}"
 
-"${VIVADO_BIN}" -mode batch -source "${SCRIPT_DIR}/vivado_ac920_vendor_overlay.tcl"
+VIVADO_LOG="${WORK_DIR}/ac920_overlay_vivado.log"
+VIVADO_JOURNAL="${WORK_DIR}/ac920_overlay_vivado.jou"
+
+(
+  cd "${REPO_DIR}"
+  "${VIVADO_BIN}" -mode batch -source "${SCRIPT_DIR}/vivado_ac920_vendor_overlay.tcl" \
+    -log "${VIVADO_LOG}" \
+    -journal "${VIVADO_JOURNAL}"
+)
+
+if [[ ! -f "${VIVADO_LOG}" ]] || ! grep -q 'AC920 vendor overlay complete\.' "${VIVADO_LOG}"; then
+  echo "Vivado did not complete the AC920 overlay. See log: ${VIVADO_LOG}" >&2
+  exit 1
+fi
 
 echo
 echo "Prepared AC920 SDR Vivado project:"
